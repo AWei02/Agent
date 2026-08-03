@@ -1,0 +1,25 @@
+# Secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+deploy/langfuse.env
+
+# Python environments and generated files
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Logs and editor metadata
+*.log
+.vscode/
+.idea/
+
+# Docker Compose local overrides
+docker-compose.override.yml

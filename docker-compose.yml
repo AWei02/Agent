@@ -1,0 +1,173 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - ./api_service/.env
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: deep_agents
+      TZ: UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d deep_agents"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  postgres-init:
+    image: postgres:16-alpine
+    env_file:
+      - ./api_service/.env
+    volumes:
+      - ./deploy/postgres/init-langfuse.sh:/scripts/init-langfuse.sh:ro
+    command: ["sh", "/scripts/init-langfuse.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
+    build:
+      context: ./api_service
+    env_file:
+      - ./api_service/.env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: ./api_service
+    restart: unless-stopped
+    env_file:
+      - ./api_service/.env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  mcp:
+    build:
+      context: ./mcp_service
+    restart: unless-stopped
+    env_file:
+      - ./mcp_service/.env
+    depends_on:
+      api:
+        condition: service_healthy
+
+  feishu-worker:
+    build:
+      context: ./api_service
+    restart: unless-stopped
+    env_file:
+      - ./api_service/.env
+    command: ["python", "-m", "workers.feishu_bot"]
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles: ["feishu"]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.12
+    restart: unless-stopped
+    user: "101:101"
+    env_file:
+      - ./deploy/langfuse.env
+    environment:
+      CLICKHOUSE_DB: default
+      TZ: UTC
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - ./deploy/langfuse.env
+    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_AUTH\" --maxmemory-policy noeviction"]
+    volumes:
+      - langfuse_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_AUTH\" ping | grep -q PONG"]
+      interval: 3s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: cgr.dev/chainguard/minio
+    restart: unless-stopped
+    env_file:
+      - ./deploy/langfuse.env
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 5s
+      retries: 12
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:4
+    restart: unless-stopped
+    env_file:
+      - ./deploy/langfuse.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  langfuse-web:
+    image: langfuse/langfuse:4
+    restart: unless-stopped
+    env_file:
+      - ./deploy/langfuse.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "${LANGFUSE_PORT:-3000}:3000"
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_redis_data:
+  langfuse_minio_data:
