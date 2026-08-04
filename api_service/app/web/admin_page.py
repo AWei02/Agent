@@ -34,7 +34,7 @@ ADMIN_PAGE = r'''<!doctype html>
       </section>
 
       <section data-panel="mcp" class="panel hidden space-y-6">
-        <div class="grid gap-6 xl:grid-cols-[380px_1fr]"><form id="server-form" class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="text-lg font-semibold">登记 MCP 服务</h2><p class="mt-1 text-sm text-slate-400">工具名由同步功能发现，不在后台手工录入。</p><label class="mt-5 block text-sm text-slate-300">服务名称<input required name="name" pattern="[A-Za-z0-9_-]+" placeholder="knowledge-bases" class="field mt-2"></label><label class="mt-4 block text-sm text-slate-300">MCP 地址<input required name="url" type="url" placeholder="http://127.0.0.1:8001/mcp" class="field mt-2"></label><label class="mt-4 block text-sm text-slate-300">说明（可选）<textarea name="description" rows="3" class="field mt-2" placeholder="财务、业务和人事知识库"></textarea></label><button class="primary-btn mt-5 w-full">登记服务</button></form>
+        <div class="grid gap-6 xl:grid-cols-[380px_1fr]"><form id="server-form" class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="text-lg font-semibold">登记 MCP 服务</h2><p class="mt-1 text-sm text-slate-400">工具名由同步功能发现</p><label class="mt-5 block text-sm text-slate-300">服务名称<input required name="name" pattern="[A-Za-z0-9_-]+" placeholder="knowledge-bases" class="field mt-2"></label><label class="mt-4 block text-sm text-slate-300">MCP 地址<input required name="url" type="url" placeholder="http://127.0.0.1:8001/mcp" class="field mt-2"></label><label class="mt-4 block text-sm text-slate-300">说明（可选）<textarea name="description" rows="3" class="field mt-2" placeholder="财务、业务和人事知识库"></textarea></label><button class="primary-btn mt-5 w-full">登记服务</button></form>
           <div><div class="mb-3 flex items-end justify-between"><div><h2 class="text-lg font-semibold">服务列表</h2><p class="text-sm text-slate-400">同步会使用 API 签发的短期内部 JWT 调用 tools/list。</p></div></div><div id="server-list" class="grid gap-3"></div></div></div>
         <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><div class="flex items-center justify-between"><div><h2 class="text-lg font-semibold">已发现工具目录</h2><p class="mt-1 text-sm text-slate-400">只有这里出现的工具，才能被角色授权。</p></div><span id="tool-count" class="rounded-full bg-slate-800 px-3 py-1 text-sm text-slate-300">0 个工具</span></div><div id="tool-list" class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></div></div>
       </section>
@@ -127,7 +127,10 @@ ADMIN_PAGE += r'''<script>
   };
   const nav = document.querySelector('#nav'), main = document.querySelector('main');
   const button = document.createElement('button');
-  button.type = 'button'; button.dataset.view = 'skills'; button.className = 'nav-btn w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium'; button.textContent = 'Skill 管理'; nav.appendChild(button);
+  button.type = 'button'; button.dataset.view = 'skills'; button.className = 'nav-btn w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium'; button.textContent = 'Skill 管理';
+  // Keep Skill management directly below the related MCP service entry.
+  const mcpNavButton = nav.querySelector('[data-view="mcp"]');
+  mcpNavButton?.insertAdjacentElement('afterend', button) || nav.appendChild(button);
   const panel = document.createElement('section');
   panel.dataset.panel = 'skills'; panel.className = 'panel hidden space-y-6';
   panel.innerHTML = `<div class="grid gap-6 xl:grid-cols-[380px_1fr]"><div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="text-lg font-semibold">刷新 Skill 目录</h2><p class="mt-1 text-sm text-slate-400">扫描 AGENT_SKILLS_DIR 下所有 SKILL.md。文件系统是唯一事实来源；已删除目录会在刷新后从可用列表移除。</p><button id="sync-skills" class="primary-btn mt-5 w-full">刷新 Skill 目录</button></div><div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="text-lg font-semibold">已发现 Skill</h2><div id="skill-list" class="mt-4 grid gap-3 sm:grid-cols-2"></div></div></div>`;
@@ -181,9 +184,21 @@ ADMIN_PAGE += r'''<script>
     list.innerHTML = state.roles.length ? state.roles.map(role => {
       const tools = labelList(role.tool_ids || [], state.tools || []), skills = labelList(role.skill_ids || [], state.skills || []);
       const title = `工具：${tools.join('、') || '无'}\nSkill：${skills.join('、') || '无'}`;
-      return `<button type="button" data-role-card="${role.id}" title="${esc(title)}" class="rounded-xl border p-4 text-left transition ${role.id === selectedRoleId ? 'border-emerald-400 bg-emerald-400/10' : 'border-slate-800 bg-slate-950 hover:border-slate-600'}"><div class="flex items-center justify-between gap-3"><h3 class="font-semibold">${esc(role.name)}</h3></div><p class="mt-2 min-h-10 text-sm text-slate-400">${esc(role.description || '暂无说明')}</p><div class="mt-4 flex gap-2"><span title="${esc(tools.join('、') || '无工具')}" class="rounded-full bg-sky-500/15 px-2 py-1 text-xs text-sky-200">${tools.length} Tool</span><span title="${esc(skills.join('、') || '无 Skill')}" class="rounded-full bg-violet-500/15 px-2 py-1 text-xs text-violet-200">${skills.length} Skill</span></div></button>`;
+      const isDisabled = !role.is_active;
+      const cardTone = role.id === selectedRoleId
+        ? 'border-emerald-400 bg-emerald-400/10'
+        : isDisabled
+          ? 'border-slate-700/80 bg-gradient-to-br from-slate-900/70 to-slate-950 hover:border-slate-600'
+          : 'border-slate-800 bg-slate-950 hover:border-slate-600';
+      const grantTone = isDisabled ? 'bg-slate-800/80 text-slate-400' : 'bg-sky-500/15 text-sky-200';
+      const skillTone = isDisabled ? 'bg-slate-800/80 text-slate-400' : 'bg-violet-500/15 text-violet-200';
+      const statusBadge = isDisabled
+        ? '<span class="inline-flex shrink-0 items-center gap-1 rounded-full border border-slate-600 bg-slate-800 px-2 py-1 text-xs font-medium text-slate-300"><span class="h-1.5 w-1.5 rounded-full bg-slate-500"></span>已停用</span>'
+        : '<span class="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-xs font-medium text-emerald-300"><span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>已启用</span>';
+      const statusHint = isDisabled ? '该角色暂不参与授权计算' : '该角色正在参与授权计算';
+      return `<button type="button" data-role-card="${role.id}" title="${esc(title)}" class="rounded-xl border p-4 text-left transition ${cardTone}"><div class="flex items-center justify-between gap-3"><div class="flex min-w-0 items-center gap-2"><h3 class="truncate font-semibold ${isDisabled ? 'text-slate-300' : ''}">${esc(role.name)}</h3>${statusBadge}</div></div><p class="mt-2 min-h-10 text-sm ${isDisabled ? 'text-slate-500' : 'text-slate-400'}">${esc(role.description || '暂无说明')}</p><p class="mt-2 text-xs ${isDisabled ? 'text-slate-500' : 'text-emerald-300/80'}">${statusHint}</p><div class="mt-4 flex gap-2"><span title="${esc(tools.join('、') || '无工具')}" class="rounded-full px-2 py-1 text-xs ${grantTone}">${tools.length} Tool</span><span title="${esc(skills.join('、') || '无 Skill')}" class="rounded-full px-2 py-1 text-xs ${skillTone}">${skills.length} Skill</span></div></button>`;
     }).join('') : '<p class="text-sm text-slate-500">先在上方创建角色。</p>';
-    list.querySelectorAll('[data-role-card]').forEach(card => { card.onclick = () => selectRole(card.dataset.roleCard); const role = state.roles.find(item => item.id === card.dataset.roleCard); const header = card.firstElementChild; const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = '编辑'; edit.className = 'rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-emerald-400'; edit.onclick = event => { event.stopPropagation(); openRoleEditor(role.id); }; header.appendChild(edit); if (!role.is_active) { const badge = document.createElement('span'); badge.textContent = '已停用'; badge.className = 'rounded bg-slate-700 px-2 py-1 text-xs text-slate-300'; header.appendChild(badge); } });
+    list.querySelectorAll('[data-role-card]').forEach(card => { card.onclick = () => selectRole(card.dataset.roleCard); const role = state.roles.find(item => item.id === card.dataset.roleCard); const header = card.firstElementChild; const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = '编辑'; edit.className = `shrink-0 rounded border px-2 py-1 text-xs transition ${role.is_active ? 'border-slate-700 text-slate-300 hover:border-emerald-400 hover:text-emerald-200' : 'border-slate-700/80 text-slate-400 hover:border-slate-500 hover:text-slate-200'}`; edit.onclick = event => { event.stopPropagation(); openRoleEditor(role.id); }; header.appendChild(edit); });
   }
   function updateAssignmentHeading() {
     const role = state.roles.find(item => item.id === selectedRoleId);
