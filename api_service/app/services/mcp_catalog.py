@@ -57,7 +57,7 @@ async def sync_mcp_catalog(session: AsyncSession, server: McpServer) -> list[Mcp
     for tool in discovered_tools:
         record = existing.get(tool.name)
         if record is None:
-            record = McpCatalogTool(server_id=server.id, name=tool.name)
+            record = McpCatalogTool(server_id=server.id, source="mcp", name=tool.name)
             session.add(record)
         record.description = tool.description
         record.input_schema = tool.inputSchema

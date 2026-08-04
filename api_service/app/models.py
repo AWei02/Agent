@@ -56,6 +56,25 @@ class RbacRole(TimestampMixin, Base):
     api_keys: Mapped[list["ApiKeyRole"]] = relationship(back_populates="role", cascade="all, delete-orphan")
 
 
+class Skill(TimestampMixin, Base):
+    __tablename__ = "skills"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    # Relative directory below AGENT_SKILLS_DIR. Each directory must contain SKILL.md.
+    path: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class RbacRoleSkill(Base):
+    __tablename__ = "rbac_role_skills"
+    __table_args__ = (UniqueConstraint("role_id", "skill_id", name="uq_rbac_role_skills_role_skill"),)
+
+    role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("platform.rbac_roles.id", ondelete="CASCADE"), primary_key=True)
+    skill_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("platform.skills.id", ondelete="CASCADE"), primary_key=True)
+
+
 class McpServer(TimestampMixin, Base):
     __tablename__ = "mcp_servers"
 
@@ -70,18 +89,20 @@ class McpServer(TimestampMixin, Base):
 
 class McpCatalogTool(TimestampMixin, Base):
     __tablename__ = "mcp_catalog_tools"
-    __table_args__ = (UniqueConstraint("server_id", "name", name="uq_mcp_catalog_tools_server_name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     server_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("platform.mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("platform.mcp_servers.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # ``mcp`` tools are discovered from a remote server; ``builtin`` tools are
+    # supplied by the Deep Agents harness and are registered by this platform.
+    source: Mapped[str] = mapped_column(String(16), default="mcp", nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     input_schema: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    server: Mapped[McpServer] = relationship(back_populates="tools")
+    server: Mapped[McpServer | None] = relationship(back_populates="tools")
     role_permissions: Mapped[list["RbacRolePermission"]] = relationship(
         back_populates="tool", cascade="all, delete-orphan"
     )
@@ -205,6 +226,14 @@ class FeishuUserToolPermission(Base):
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("platform.feishu_user_profiles.id", ondelete="CASCADE"), primary_key=True)
     tool_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("platform.mcp_catalog_tools.id", ondelete="CASCADE"), primary_key=True)
+
+
+class FeishuUserSkillPermission(Base):
+    __tablename__ = "feishu_user_skill_permissions"
+    __table_args__ = (UniqueConstraint("user_id", "skill_id", name="uq_feishu_user_skill"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("platform.feishu_user_profiles.id", ondelete="CASCADE"), primary_key=True)
+    skill_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("platform.skills.id", ondelete="CASCADE"), primary_key=True)
 
 
 class FeishuTurn(Base):

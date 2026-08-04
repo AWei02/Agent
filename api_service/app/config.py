@@ -21,6 +21,7 @@ class Settings:
     openai_model: str = ""
     langgraph_database_url: str = ""
     langgraph_schema: str = "langgraph"
+    skills_dir: Path = Path("skills")
 
 
 @lru_cache
@@ -45,4 +46,5 @@ def get_settings() -> Settings:
         openai_model=os.getenv("OPENAI_MODEL", ""),
         langgraph_database_url=os.getenv("LANGGRAPH_DATABASE_URL", ""),
         langgraph_schema=os.getenv("LANGGRAPH_SCHEMA", "langgraph"),
+        skills_dir=Path(os.getenv("AGENT_SKILLS_DIR", str(service_dir / "skills"))).resolve(),
     )

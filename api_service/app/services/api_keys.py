@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import ApiKey, ApiKeyRole, FeishuUserRole, FeishuUserToolPermission, McpCatalogTool, McpServer, RbacRole, RbacRolePermission
 
 VALID_FILE_ACCESS = frozenset({"none", "read_only", "read_write"})
+FILESYSTEM_BUILTIN_TOOLS = frozenset({"ls", "read_file", "write_file", "edit_file", "delete", "glob", "grep", "execute"})
+READ_ONLY_FILESYSTEM_BUILTIN_TOOLS = frozenset({"ls", "read_file", "glob", "grep"})
 
 
 class ApiKeyError(Exception):
@@ -30,11 +32,24 @@ class AuthorizedSubject:
 
 @dataclass(frozen=True)
 class GrantedTool:
-    server_id: uuid.UUID
-    server_name: str
-    server_url: str
+    source: str
     name: str
     description: str | None
+    server_id: uuid.UUID | None = None
+    server_name: str | None = None
+    server_url: str | None = None
+
+
+def apply_file_access_cap(subject: AuthorizedSubject, tools: list[GrantedTool]) -> list[GrantedTool]:
+    """Apply the API key's file permission as a hard cap on role grants."""
+    if subject.file_access == "read_write":
+        return tools
+    allowed_files = READ_ONLY_FILESYSTEM_BUILTIN_TOOLS if subject.file_access == "read_only" else frozenset()
+    return [
+        tool
+        for tool in tools
+        if tool.source != "builtin" or tool.name not in FILESYSTEM_BUILTIN_TOOLS or tool.name in allowed_files
+    ]
 
 
 def _hash_key(raw_key: str) -> str:
@@ -123,22 +138,30 @@ async def get_granted_tools(session: AsyncSession, subject: AuthorizedSubject, *
     query = (
         select(
             McpCatalogTool.id,
+            McpCatalogTool.source,
             McpServer.id,
             McpServer.name,
             McpServer.url,
             McpCatalogTool.name,
             McpCatalogTool.description,
         )
-        .join(McpServer, McpServer.id == McpCatalogTool.server_id)
+        .outerjoin(McpServer, McpServer.id == McpCatalogTool.server_id)
         .where(
             McpCatalogTool.id.in_(allowed_ids),
-            McpServer.is_active.is_(True),
             McpCatalogTool.is_active.is_(True),
+            (McpCatalogTool.source == "builtin") | (McpServer.is_active.is_(True)),
         )
-        .order_by(McpServer.name, McpCatalogTool.name)
+        .order_by(McpCatalogTool.source, McpServer.name, McpCatalogTool.name)
     )
     rows = (await session.execute(query)).all()
     return [
-        GrantedTool(server_id=row[1], server_name=row[2], server_url=row[3], name=row[4], description=row[5])
+        GrantedTool(
+            source=row[1],
+            server_id=row[2],
+            server_name=row[3],
+            server_url=row[4],
+            name=row[5],
+            description=row[6],
+        )
         for row in rows
     ]

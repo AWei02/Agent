@@ -6,24 +6,28 @@ import os
 import secrets
 import time
 import uuid
+import logging
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from openai import APIStatusError, RateLimitError
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.runtime import AgentRuntimeError, create_request_agent
+from app.agent.runtime import AgentRuntimeError, build_skill_files, create_request_agent
 from app.auth.dependencies import get_api_key_subject
 from app.db import get_db_session
 from app.services.api_keys import AuthorizedSubject, get_granted_tools
+from app.services.skills import SkillError, get_granted_skills
 from app.services.audit import record_turn
 from app.services.observability import langfuse_callbacks, observe_chat_request, record_chat_output
 from app.models import FeishuSession, FeishuTurn, FeishuUserProfile
 
 router = APIRouter(prefix="/v1", tags=["chat-completions"])
+logger = logging.getLogger(__name__)
 
 
 class ChatMessage(BaseModel):
@@ -84,6 +88,10 @@ async def chat_completions(
 
     feishu_user = await _feishu_user(request, session)
     granted_tools = await get_granted_tools(session, subject, feishu_user_id=feishu_user.id if feishu_user else None)
+    try:
+        granted_skills = await get_granted_skills(session, subject, feishu_user_id=feishu_user.id if feishu_user else None)
+    except SkillError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     mcp_context = None
     if feishu_user is not None:
         current_session = await session.scalar(select(FeishuSession).where(FeishuSession.thread_id == thread_id))
@@ -100,9 +108,21 @@ async def chat_completions(
             source=source,
             messages=trace_messages,
         ) as observation:
-            agent = await create_request_agent(subject, granted_tools, getattr(request.app.state, "checkpointer", None), mcp_context=mcp_context)
+            agent = await create_request_agent(
+                subject,
+                granted_tools,
+                granted_skills,
+                getattr(request.app.state, "checkpointer", None),
+                mcp_context=mcp_context,
+            )
             result = await agent.ainvoke(
-                {"messages": _to_langchain_messages(payload.messages)},
+                {
+                    "messages": _to_langchain_messages(payload.messages),
+                    # StateBackend is request/thread scoped.  The same
+                    # authorized skill files are supplied on every turn so a
+                    # resumed Feishu session can still read its Skill.md.
+                    "files": build_skill_files(granted_skills),
+                },
                 config={"configurable": {"thread_id": resolved_thread_id}, "callbacks": langfuse_callbacks()},
             )
             response_messages = result.get("messages", [])
@@ -112,7 +132,25 @@ async def chat_completions(
             record_chat_output(observation, content)
     except AgentRuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except RateLimitError as exc:
+        logger.warning("Model provider rate limit: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="模型服务当前限流或额度已耗尽，请稍后重试或检查模型服务配额。",
+        ) from exc
+    except APIStatusError as exc:
+        logger.warning("Model provider rejected request: status=%s", exc.status_code)
+        if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="模型服务当前繁忙，请稍后重试。",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"模型服务请求失败（HTTP {exc.status_code}）。",
+        ) from exc
     except Exception as exc:
+        logger.exception("Agent execution failed for %s request", source)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Agent execution failed") from exc
 
     if subject.chat_tracking:

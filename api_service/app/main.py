@@ -19,8 +19,10 @@ from app.config import get_settings
 from app.api.chat import router as chat_router
 from app.api.feishu import router as feishu_router
 from app.auth.dependencies import get_api_key_subject
-from app.db import get_db_session
-from app.services.api_keys import AuthorizedSubject, get_granted_tools
+from app.db import AsyncSessionLocal, get_db_session
+from app.services.api_keys import AuthorizedSubject, apply_file_access_cap, get_granted_tools
+from app.services.builtin_tools import ensure_builtin_tool_catalog
+from app.services.skills import SkillError, get_granted_skills, sync_skill_catalog
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,6 +34,12 @@ async def lifespan(app: FastAPI):
     scoped_url = f"{url}{separator}options=-csearch_path%3D{settings.langgraph_schema}"
     async with AsyncPostgresSaver.from_conn_string(scoped_url) as checkpointer:
         await checkpointer.setup()
+        # Built-in Deep Agents tools are first-class RBAC resources, just like
+        # discovered MCP tools. Seed them before accepting requests.
+        async with AsyncSessionLocal() as session:
+            await ensure_builtin_tool_catalog(session)
+            await sync_skill_catalog(session)
+            await session.commit()
         app.state.checkpointer = checkpointer
         yield
 
@@ -52,11 +60,22 @@ async def get_current_access(
     subject: AuthorizedSubject = Depends(get_api_key_subject), session: AsyncSession = Depends(get_db_session)
 ) -> dict[str, object]:
     """Temporary diagnostic endpoint; the chat endpoint will reuse this authorization path."""
-    tools = await get_granted_tools(session, subject)
+    tools = apply_file_access_cap(subject, await get_granted_tools(session, subject))
+    try:
+        skills = await get_granted_skills(session, subject)
+    except SkillError as exc:
+        skills = []
     return {
         "subject": {"id": str(subject.api_key_id), "name": subject.name, "file_access": subject.file_access},
         "tools": [
-            {"server": tool.server_name, "url": tool.server_url, "name": tool.name, "description": tool.description}
+            {
+                "source": tool.source,
+                "server": tool.server_name,
+                "url": tool.server_url,
+                "name": tool.name,
+                "description": tool.description,
+            }
             for tool in tools
         ],
+        "skills": [{"id": str(skill.id), "name": skill.name, "path": skill.path} for skill in skills],
     }

@@ -250,6 +250,10 @@ class FeishuBot:
                 self.reply(chat_id, "不能删除当前会话，请先使用 /switch 切换到其他会话。")
             elif exc.code == 404:
                 self.reply(chat_id, "会话编号不存在，请使用 /sessions 查看会话列表。")
+            elif exc.code == 429:
+                self.reply(chat_id, "模型服务当前限流或额度已耗尽，请稍后再试。")
+            elif exc.code == 503:
+                self.reply(chat_id, "模型服务当前繁忙，请稍后重试。")
             else:
                 self.reply(chat_id, "请求未能完成，请稍后再试。")
         except Exception:

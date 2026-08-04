@@ -18,9 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_db_session
-from app.models import ApiAuditSession, ApiAuditTurn, ApiKey, ApiKeyRole, FeishuSession, FeishuTurn, FeishuUserProfile, FeishuUserRole, FeishuUserToolPermission, McpCatalogTool, McpServer, RbacRole, RbacRolePermission
+from app.models import ApiAuditSession, ApiAuditTurn, ApiKey, ApiKeyRole, FeishuSession, FeishuTurn, FeishuUserProfile, FeishuUserRole, FeishuUserSkillPermission, FeishuUserToolPermission, McpCatalogTool, McpServer, RbacRole, RbacRolePermission, RbacRoleSkill, Skill
 from app.services.mcp_catalog import McpCatalogError, sync_mcp_catalog
-from app.services.api_keys import ApiKeyError, AuthorizedSubject, authenticate_api_key, create_api_key, get_granted_tools
+from app.services.builtin_tools import ensure_builtin_tool_catalog
+from app.services.api_keys import ApiKeyError, AuthorizedSubject, apply_file_access_cap, authenticate_api_key, create_api_key, get_granted_tools
+from app.services.skills import SkillError, get_granted_skills, sync_skill_catalog
 from app.web.admin_page import ADMIN_PAGE
 from app.web.tracking_page import build_tracking_page
 from app.web.feishu_users_page import FEISHU_USERS_PAGE
@@ -48,13 +50,22 @@ async def feishu_users_page() -> str:
 class CreateRoleRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     description: str | None = None
+    is_active: bool = True
+
+
+class UpdateRoleRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    description: str | None = None
+    is_active: bool
 
 
 class RoleResponse(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None
+    is_active: bool
     tool_ids: list[uuid.UUID] = Field(default_factory=list)
+    skill_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class CreateMcpServerRequest(BaseModel):
@@ -81,11 +92,24 @@ class ToolResponse(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None
-    server_id: uuid.UUID
+    source: Literal["mcp", "builtin"]
+    server_id: uuid.UUID | None = None
 
 
 class SetRoleToolsRequest(BaseModel):
     tool_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class SkillResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    path: str
+    description: str | None
+    is_active: bool
+
+
+class SetRoleSkillsRequest(BaseModel):
+    skill_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -127,6 +151,7 @@ class ApiKeySummary(BaseModel):
 class FeishuUserUpdateRequest(BaseModel):
     role_ids: list[uuid.UUID] = Field(default_factory=list)
     extra_tool_ids: list[uuid.UUID] = Field(default_factory=list)
+    extra_skill_ids: list[uuid.UUID] = Field(default_factory=list)
     is_active: bool = True
 
 
@@ -137,7 +162,9 @@ class FeishuUserSummary(BaseModel):
     avatar_url: str | None
     role_ids: list[uuid.UUID]
     extra_tool_ids: list[uuid.UUID]
+    extra_skill_ids: list[uuid.UUID]
     effective_tools: list[dict[str, str]]
+    effective_skills: list[dict[str, str]]
     session_count: int
     is_active: bool
 
@@ -148,31 +175,54 @@ class SessionVisibilityRequest(BaseModel):
 
 @router.post("/roles", response_model=RoleResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 async def create_role(payload: CreateRoleRequest, session: Annotated[AsyncSession, Depends(get_db_session)]) -> RoleResponse:
-    role = RbacRole(name=payload.name, description=payload.description)
+    role = RbacRole(name=payload.name, description=payload.description, is_active=payload.is_active)
     session.add(role)
     try:
         await session.flush()
     except IntegrityError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Role name already exists") from exc
-    return RoleResponse(id=role.id, name=role.name, description=role.description)
+    return RoleResponse(id=role.id, name=role.name, description=role.description, is_active=role.is_active)
 
 
 @router.get("/roles", response_model=list[RoleResponse], dependencies=[Depends(require_admin)])
 async def list_roles(session: Annotated[AsyncSession, Depends(get_db_session)]) -> list[RoleResponse]:
-    roles = (await session.scalars(select(RbacRole).where(RbacRole.is_active.is_(True)).order_by(RbacRole.name))).all()
+    roles = (await session.scalars(select(RbacRole).order_by(RbacRole.name))).all()
     role_tool_rows = (await session.execute(select(RbacRolePermission.role_id, RbacRolePermission.tool_id))).all()
+    role_skill_rows = (await session.execute(select(RbacRoleSkill.role_id, RbacRoleSkill.skill_id))).all()
     tool_ids_by_role: dict[uuid.UUID, list[uuid.UUID]] = {}
     for role_id, tool_id in role_tool_rows:
         tool_ids_by_role.setdefault(role_id, []).append(tool_id)
+    skill_ids_by_role: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for role_id, skill_id in role_skill_rows:
+        skill_ids_by_role.setdefault(role_id, []).append(skill_id)
     return [
         RoleResponse(
             id=role.id,
             name=role.name,
             description=role.description,
+            is_active=role.is_active,
             tool_ids=tool_ids_by_role.get(role.id, []),
+            skill_ids=skill_ids_by_role.get(role.id, []),
         )
         for role in roles
     ]
+
+
+@router.patch("/roles/{role_id}", response_model=RoleResponse, dependencies=[Depends(require_admin)])
+async def update_role(
+    role_id: uuid.UUID, payload: UpdateRoleRequest, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> RoleResponse:
+    role = await session.get(RbacRole, role_id)
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+    role.name, role.description, role.is_active = payload.name, payload.description, payload.is_active
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Role name already exists") from exc
+    skill_ids = list((await session.scalars(select(RbacRoleSkill.skill_id).where(RbacRoleSkill.role_id == role.id))).all())
+    tool_ids = list((await session.scalars(select(RbacRolePermission.tool_id).where(RbacRolePermission.role_id == role.id))).all())
+    return RoleResponse(id=role.id, name=role.name, description=role.description, is_active=role.is_active, tool_ids=tool_ids, skill_ids=skill_ids)
 
 
 @router.post("/mcp-servers", response_model=McpServerResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
@@ -262,20 +312,37 @@ async def sync_server_tools(server_id: uuid.UUID, session: Annotated[AsyncSessio
         tools = await sync_mcp_catalog(session, server)
     except McpCatalogError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    return [ToolResponse(id=tool.id, name=tool.name, description=tool.description, server_id=tool.server_id) for tool in tools]
+    return [ToolResponse(id=tool.id, name=tool.name, description=tool.description, source=tool.source, server_id=tool.server_id) for tool in tools]
 
 
 @router.get("/mcp-tools", response_model=list[ToolResponse], dependencies=[Depends(require_admin)])
 async def list_mcp_tools(session: Annotated[AsyncSession, Depends(get_db_session)]) -> list[ToolResponse]:
+    """Compatibility endpoint; returns the unified MCP and built-in tool catalog."""
+    await ensure_builtin_tool_catalog(session)
     tools = (
         await session.scalars(
             select(McpCatalogTool)
-            .join(McpServer)
-            .where(McpCatalogTool.is_active.is_(True), McpServer.is_active.is_(True))
-            .order_by(McpCatalogTool.name)
+            .outerjoin(McpServer)
+            .where(
+                McpCatalogTool.is_active.is_(True),
+                (McpCatalogTool.source == "builtin") | (McpServer.is_active.is_(True)),
+            )
+            .order_by(McpCatalogTool.source, McpServer.name, McpCatalogTool.name)
         )
     ).all()
-    return [ToolResponse(id=tool.id, name=tool.name, description=tool.description, server_id=tool.server_id) for tool in tools]
+    return [ToolResponse(id=tool.id, name=tool.name, description=tool.description, source=tool.source, server_id=tool.server_id) for tool in tools]
+
+
+@router.post("/skills/sync", response_model=list[SkillResponse], dependencies=[Depends(require_admin)])
+async def sync_skills(session: Annotated[AsyncSession, Depends(get_db_session)]) -> list[SkillResponse]:
+    skills = await sync_skill_catalog(session)
+    return [SkillResponse(id=item.id, name=item.name, path=item.path, description=item.description, is_active=item.is_active) for item in skills]
+
+
+@router.get("/skills", response_model=list[SkillResponse], dependencies=[Depends(require_admin)])
+async def list_skills(session: Annotated[AsyncSession, Depends(get_db_session)]) -> list[SkillResponse]:
+    skills = await sync_skill_catalog(session)
+    return [SkillResponse(id=item.id, name=item.name, path=item.path, description=item.description, is_active=item.is_active) for item in skills]
 
 
 @router.put("/roles/{role_id}/tools", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
@@ -298,6 +365,24 @@ async def set_role_tools(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="One or more active MCP tools do not exist")
     await session.execute(delete(RbacRolePermission).where(RbacRolePermission.role_id == role.id))
     session.add_all(RbacRolePermission(role_id=role.id, tool_id=tool_id) for tool_id in normalized_tool_ids)
+    await session.flush()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put("/roles/{role_id}/skills", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
+async def set_role_skills(
+    role_id: uuid.UUID, payload: SetRoleSkillsRequest, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> Response:
+    role = await session.get(RbacRole, role_id)
+    if role is None or not role.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active role not found")
+    skill_ids = list(dict.fromkeys(payload.skill_ids))
+    if skill_ids:
+        found = (await session.scalars(select(Skill.id).where(Skill.id.in_(skill_ids), Skill.is_active.is_(True)))).all()
+        if len(found) != len(skill_ids):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="One or more active skills do not exist")
+    await session.execute(delete(RbacRoleSkill).where(RbacRoleSkill.role_id == role.id))
+    session.add_all(RbacRoleSkill(role_id=role.id, skill_id=skill_id) for skill_id in skill_ids)
     await session.flush()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -417,19 +502,31 @@ async def delete_api_key(api_key_id: uuid.UUID, session: Annotated[AsyncSession,
 async def _feishu_summary(user: FeishuUserProfile, session: AsyncSession) -> FeishuUserSummary:
     role_ids = list((await session.scalars(select(FeishuUserRole.role_id).where(FeishuUserRole.user_id == user.id))).all())
     extra_tool_ids = list((await session.scalars(select(FeishuUserToolPermission.tool_id).where(FeishuUserToolPermission.user_id == user.id))).all())
+    extra_skill_ids = list((await session.scalars(select(FeishuUserSkillPermission.skill_id).where(FeishuUserSkillPermission.user_id == user.id))).all())
     platform_key = os.getenv("FEISHU_PLATFORM_API_KEY", "")
     effective_tools: list[dict[str, str]] = []
+    effective_skills: list[dict[str, str]] = []
     if platform_key:
         try:
             subject = await authenticate_api_key(session, platform_key)
             effective_tools = [
-                {"id": str(item.server_id) + ":" + item.name, "name": item.name, "server": item.server_name}
-                for item in await get_granted_tools(session, subject, feishu_user_id=user.id)
+                {
+                    "id": str(item.server_id or "builtin") + ":" + item.name,
+                    "name": item.name,
+                    "server": item.server_name or "Deep Agents",
+                }
+                for item in apply_file_access_cap(
+                    subject, await get_granted_tools(session, subject, feishu_user_id=user.id)
+                )
             ]
-        except ApiKeyError:
+            effective_skills = [
+                {"id": str(item.id), "name": item.name, "path": item.path}
+                for item in await get_granted_skills(session, subject, feishu_user_id=user.id)
+            ]
+        except (ApiKeyError, SkillError):
             pass
     count = await session.scalar(select(func.count()).select_from(FeishuSession).where(FeishuSession.tenant_key == user.tenant_key, FeishuSession.open_id == user.open_id))
-    return FeishuUserSummary(id=user.id, display_name=user.display_name, open_id=user.open_id, avatar_url=user.avatar_url, role_ids=role_ids, extra_tool_ids=extra_tool_ids, effective_tools=effective_tools, session_count=int(count or 0), is_active=user.is_active)
+    return FeishuUserSummary(id=user.id, display_name=user.display_name, open_id=user.open_id, avatar_url=user.avatar_url, role_ids=role_ids, extra_tool_ids=extra_tool_ids, extra_skill_ids=extra_skill_ids, effective_tools=effective_tools, effective_skills=effective_skills, session_count=int(count or 0), is_active=user.is_active)
 
 
 @router.get("/feishu-users", response_model=list[FeishuUserSummary], dependencies=[Depends(require_admin)])
@@ -443,18 +540,23 @@ async def update_feishu_user(user_id: uuid.UUID, payload: FeishuUserUpdateReques
     user = await session.get(FeishuUserProfile, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feishu user not found")
-    role_ids, tool_ids = list(dict.fromkeys(payload.role_ids)), list(dict.fromkeys(payload.extra_tool_ids))
+    role_ids, tool_ids, skill_ids = list(dict.fromkeys(payload.role_ids)), list(dict.fromkeys(payload.extra_tool_ids)), list(dict.fromkeys(payload.extra_skill_ids))
     if role_ids:
         if len((await session.scalars(select(RbacRole.id).where(RbacRole.id.in_(role_ids), RbacRole.is_active.is_(True)))).all()) != len(role_ids):
             raise HTTPException(status_code=422, detail="One or more active roles do not exist")
     if tool_ids:
         if len((await session.scalars(select(McpCatalogTool.id).where(McpCatalogTool.id.in_(tool_ids), McpCatalogTool.is_active.is_(True)))).all()) != len(tool_ids):
             raise HTTPException(status_code=422, detail="One or more active tools do not exist")
+    if skill_ids:
+        if len((await session.scalars(select(Skill.id).where(Skill.id.in_(skill_ids), Skill.is_active.is_(True)))).all()) != len(skill_ids):
+            raise HTTPException(status_code=422, detail="One or more active skills do not exist")
     user.is_active = payload.is_active
     await session.execute(delete(FeishuUserRole).where(FeishuUserRole.user_id == user.id))
     await session.execute(delete(FeishuUserToolPermission).where(FeishuUserToolPermission.user_id == user.id))
+    await session.execute(delete(FeishuUserSkillPermission).where(FeishuUserSkillPermission.user_id == user.id))
     session.add_all(FeishuUserRole(user_id=user.id, role_id=role_id) for role_id in role_ids)
     session.add_all(FeishuUserToolPermission(user_id=user.id, tool_id=tool_id) for tool_id in tool_ids)
+    session.add_all(FeishuUserSkillPermission(user_id=user.id, skill_id=skill_id) for skill_id in skill_ids)
     await session.flush()
     return await _feishu_summary(user, session)
 
