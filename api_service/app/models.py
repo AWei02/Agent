@@ -30,6 +30,9 @@ class ApiKey(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     key_prefix: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)
     key_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    # This console is deliberately single-admin: retain the generated value so it
+    # can be retrieved later from the protected administration interface.
+    key_value: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     file_access: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
     chat_tracking: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

@@ -55,7 +55,7 @@ async def create_api_key(
     expires_at: datetime | None = None,
     chat_tracking: bool = False,
 ) -> tuple[ApiKey, str]:
-    """Create an API key and return its one-time plaintext value."""
+    """Create an API key and retain its value for the protected admin console."""
     if file_access not in VALID_FILE_ACCESS:
         raise ApiKeyError("file_access must be none, read_only, or read_write")
     if expires_at is not None and expires_at.tzinfo is None:
@@ -74,6 +74,7 @@ async def create_api_key(
         name=name,
         key_prefix=raw_key[:18],
         key_hash=_hash_key(raw_key),
+        key_value=raw_key,
         file_access=file_access,
         notes=notes,
         expires_at=expires_at,

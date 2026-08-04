@@ -108,13 +108,14 @@ class CreateApiKeyResponse(BaseModel):
     name: str
     api_key: str
     file_access: str
-    warning: str = "Copy api_key now. It is never stored in plaintext and cannot be shown again."
+    warning: str = "The API key is retained and can be viewed later in the protected admin console."
 
 
 class ApiKeySummary(BaseModel):
     id: uuid.UUID
     name: str
     key_prefix: str
+    api_key: str | None
     file_access: str
     is_active: bool
     created_at: datetime
@@ -332,6 +333,7 @@ async def list_api_keys(session: Annotated[AsyncSession, Depends(get_db_session)
             id=record.id,
             name=record.name,
             key_prefix=record.key_prefix,
+            api_key=record.key_value,
             file_access=record.file_access,
             is_active=record.is_active,
             created_at=record.created_at,
@@ -371,6 +373,7 @@ async def update_api_key(
         id=api_key.id,
         name=api_key.name,
         key_prefix=api_key.key_prefix,
+        api_key=api_key.key_value,
         file_access=api_key.file_access,
         is_active=api_key.is_active,
         created_at=api_key.created_at,
