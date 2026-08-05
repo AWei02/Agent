@@ -28,6 +28,7 @@ class AuthorizedSubject:
     name: str
     file_access: str
     chat_tracking: bool
+    output_schema: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ async def create_api_key(
     expires_at: datetime | None = None,
     chat_tracking: bool = False,
     prompt_template_id: uuid.UUID | None = None,
+    output_schema: dict | None = None,
 ) -> tuple[ApiKey, str]:
     """Create an API key and retain its value for the protected admin console."""
     if file_access not in VALID_FILE_ACCESS:
@@ -96,6 +98,7 @@ async def create_api_key(
         expires_at=expires_at,
         chat_tracking=chat_tracking,
         prompt_template_id=prompt_template_id,
+        output_schema=output_schema,
     )
     session.add(record)
     await session.flush()
@@ -114,7 +117,13 @@ async def authenticate_api_key(session: AsyncSession, raw_key: str) -> Authorize
     if api_key is None or not api_key.is_active or (api_key.expires_at is not None and api_key.expires_at <= now):
         raise ApiKeyError("invalid, disabled, or expired API key")
 
-    return AuthorizedSubject(api_key_id=api_key.id, name=api_key.name, file_access=api_key.file_access, chat_tracking=api_key.chat_tracking)
+    return AuthorizedSubject(
+        api_key_id=api_key.id,
+        name=api_key.name,
+        file_access=api_key.file_access,
+        chat_tracking=api_key.chat_tracking,
+        output_schema=api_key.output_schema,
+    )
 
 
 async def get_granted_tools(session: AsyncSession, subject: AuthorizedSubject, *, feishu_user_id: uuid.UUID | None = None) -> list[GrantedTool]:

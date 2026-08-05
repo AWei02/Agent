@@ -36,6 +36,9 @@ class ApiKey(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     file_access: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
     chat_tracking: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Optional per-key contract for the final assistant message. MCP tool
+    # results remain internal and are deliberately not constrained by this.
+    output_schema: Mapped[dict | None] = mapped_column(JSON)
     prompt_template_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("platform.prompt_templates.id", ondelete="SET NULL"), index=True
     )

@@ -113,6 +113,44 @@ ADMIN_PAGE += r'''<script>
 })();
 </script>'''
 
+
+# Must be last: the older console incrementally rebinds the Key editor.
+ADMIN_PAGE += r'''<script>
+(() => {
+  const priorOpenKeyEditor = window.openKeyEditor;
+  window.openKeyEditor = id => {
+    priorOpenKeyEditor(id);
+    const key = state.keys.find(item => item.id === id); if (!key) return;
+    document.querySelector('#edit-key-output-schema-row')?.remove();
+    const roles = document.querySelector('#edit-key-roles');
+    roles.insertAdjacentHTML('beforebegin', `<label id="edit-key-output-schema-row" class="mb-5 block text-sm text-slate-300">最终输出 JSON Schema（留空则不限制）<textarea id="edit-key-output-schema" rows="10" spellcheck="false" class="field mt-2 font-mono text-xs" placeholder='{"type":"object","required":["items"],"properties":{"items":{"type":"array"}},"additionalProperties":false}'></textarea><span class="mt-2 block text-xs text-slate-500">启用后，服务端会校验最终回答；回答必须是纯 JSON，不能带 Markdown 或说明文字。</span></label>`);
+    document.querySelector('#edit-key-output-schema').value = key.output_schema ? JSON.stringify(key.output_schema, null, 2) : '';
+  };
+  document.querySelector('#edit-key-form').onsubmit = async event => {
+    event.preventDefault();
+    const id = document.querySelector('#edit-key-id').value;
+    const role_ids = [...document.querySelectorAll('#edit-key-roles input:checked')].map(node => node.value);
+    const rawSchema = document.querySelector('#edit-key-output-schema')?.value.trim() || '';
+    let output_schema = null;
+    try { output_schema = rawSchema ? JSON.parse(rawSchema) : null; }
+    catch (_) { toast('最终输出规则不是合法 JSON', 'error'); return; }
+    if (rawSchema && (Array.isArray(output_schema) || typeof output_schema !== 'object')) { toast('JSON Schema 必须是对象', 'error'); return; }
+    try {
+      await api(`/api-keys/${id}`, {method:'PATCH', body:JSON.stringify({
+        name:document.querySelector('#edit-key-display-name').value.trim(),
+        file_access:document.querySelector('#edit-key-file-access').value,
+        role_ids,
+        chat_tracking:document.querySelector('#edit-key-chat-tracking').checked,
+        prompt_template_id:document.querySelector('#edit-key-prompt-template')?.value || null,
+        output_schema,
+      })});
+      document.querySelector('#edit-key-dialog').close(); await loadAll(); toast('API Key 配置已保存');
+    } catch(error) { toast(error.message, 'error'); }
+  };
+})();
+</script>'''
+
+
 ADMIN_PAGE += r'''<script>
 (() => {
   const nav=document.querySelector('#nav'), main=document.querySelector('main'); if(!nav||!main)return;
@@ -507,5 +545,42 @@ ADMIN_PAGE += r'''<script>
   };
   document.querySelector('#key-form').onsubmit = async event => { event.preventDefault(); const form=new FormData(event.target); const role_ids=[...document.querySelectorAll('#key-roles input:checked')].map(node=>node.value); try { const result=await api('/api-keys',{method:'POST',body:JSON.stringify({name:form.get('name'),file_access:form.get('file_access'),role_ids,chat_tracking:false,prompt_template_id:document.querySelector('#key-prompt-template')?.value || null})}); state.newKey=result.api_key; document.querySelector('#new-key').textContent=result.api_key; event.target.reset(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
   document.querySelector('#edit-key-form').onsubmit = async event => { event.preventDefault(); const id=document.querySelector('#edit-key-id').value; const role_ids=[...document.querySelectorAll('#edit-key-roles input:checked')].map(node=>node.value); try { await api(`/api-keys/${id}`,{method:'PATCH',body:JSON.stringify({name:document.querySelector('#edit-key-display-name').value.trim(),file_access:document.querySelector('#edit-key-file-access').value,role_ids,chat_tracking:document.querySelector('#edit-key-chat-tracking').checked,prompt_template_id:document.querySelector('#edit-key-prompt-template')?.value || null})}); document.querySelector('#edit-key-dialog').close(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
+})();
+</script>'''
+
+
+# This must remain at EOF: the legacy console rebinds the Key editor several times.
+ADMIN_PAGE += r'''<script>
+(() => {
+  const previousOpenKeyEditor = window.openKeyEditor;
+  window.openKeyEditor = id => {
+    previousOpenKeyEditor(id);
+    const key = state.keys.find(item => item.id === id); if (!key) return;
+    document.querySelector('#edit-key-output-schema-row')?.remove();
+    const roles = document.querySelector('#edit-key-roles');
+    roles.insertAdjacentHTML('beforebegin', `<label id="edit-key-output-schema-row" class="mb-5 block text-sm text-slate-300">最终输出 JSON Schema（留空则不限制）<textarea id="edit-key-output-schema" rows="10" spellcheck="false" class="field mt-2 font-mono text-xs" placeholder='{"type":"object","required":["items"],"properties":{"items":{"type":"array"}},"additionalProperties":false}'></textarea><span class="mt-2 block text-xs text-slate-500">启用后，服务端会校验最终回答；回答必须是纯 JSON，不能带 Markdown 或说明文字。</span></label>`);
+    document.querySelector('#edit-key-output-schema').value = key.output_schema ? JSON.stringify(key.output_schema, null, 2) : '';
+  };
+  document.querySelector('#edit-key-form').onsubmit = async event => {
+    event.preventDefault();
+    const id = document.querySelector('#edit-key-id').value;
+    const role_ids = [...document.querySelectorAll('#edit-key-roles input:checked')].map(node => node.value);
+    const rawSchema = document.querySelector('#edit-key-output-schema')?.value.trim() || '';
+    let output_schema = null;
+    try { output_schema = rawSchema ? JSON.parse(rawSchema) : null; }
+    catch (_) { toast('最终输出规则不是合法 JSON', 'error'); return; }
+    if (rawSchema && (Array.isArray(output_schema) || typeof output_schema !== 'object')) { toast('JSON Schema 必须是对象', 'error'); return; }
+    try {
+      await api(`/api-keys/${id}`, {method:'PATCH', body:JSON.stringify({
+        name:document.querySelector('#edit-key-display-name').value.trim(),
+        file_access:document.querySelector('#edit-key-file-access').value,
+        role_ids,
+        chat_tracking:document.querySelector('#edit-key-chat-tracking').checked,
+        prompt_template_id:document.querySelector('#edit-key-prompt-template')?.value || null,
+        output_schema,
+      })});
+      document.querySelector('#edit-key-dialog').close(); await loadAll(); toast('API Key 配置已保存');
+    } catch(error) { toast(error.message, 'error'); }
+  };
 })();
 </script>'''

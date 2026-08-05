@@ -25,6 +25,7 @@ from app.services.skills import SkillError, get_granted_skills
 from app.services.prompts import get_request_system_prompt
 from app.services.audit import record_turn
 from app.services.observability import langfuse_callbacks, observe_chat_request, record_chat_output
+from app.services.output_contracts import OutputValidationError, output_contract_prompt, validate_final_output
 from app.models import FeishuSession, FeishuTurn, FeishuUserProfile
 
 router = APIRouter(prefix="/v1", tags=["chat-completions"])
@@ -105,6 +106,9 @@ async def chat_completions(
     system_prompt = await get_request_system_prompt(
         session, subject, feishu_user_id=feishu_user.id if feishu_user else None
     )
+    contract_prompt = output_contract_prompt(subject.output_schema)
+    if contract_prompt:
+        system_prompt = f"{system_prompt}\n\n{contract_prompt}" if system_prompt else contract_prompt
     mcp_context = None
     if feishu_user is not None:
         current_session = await session.scalar(select(FeishuSession).where(FeishuSession.thread_id == thread_id))
@@ -143,7 +147,17 @@ async def chat_completions(
             if not response_messages:
                 raise AgentRuntimeError("Agent returned no messages")
             content = _content_as_text(response_messages[-1].content)
+            validate_final_output(content, subject.output_schema)
             record_chat_output(observation, content)
+    except OutputValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "OUTPUT_SCHEMA_VALIDATION_FAILED",
+                "message": "The model output did not satisfy this API key's JSON Schema.",
+                "errors": exc.errors,
+            },
+        ) from exc
     except AgentRuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except RateLimitError as exc:

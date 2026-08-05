@@ -14,7 +14,7 @@ headers = {
 payload = {
     "model": model_name,
     "messages": [
-        {"role": "user", "content": "你好"}
+        {"role": "user", "content": "把以下项目会议纪要整理成待办事项：1. 李明本周五前完成登录页面。2. 王芳下周一前确认支付接口方案。3. 测试环境暂定周三部署，负责人待确认。"}
     ],
     "stream": False
 }

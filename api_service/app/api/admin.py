@@ -23,6 +23,7 @@ from app.services.feishu_secrets import FeishuSecretError, encrypt_secret
 from app.services.mcp_catalog import McpCatalogError, sync_mcp_catalog
 from app.services.builtin_tools import ensure_builtin_tool_catalog
 from app.services.api_keys import ApiKeyError, AuthorizedSubject, apply_file_access_cap, authenticate_api_key, create_api_key, get_granted_tools
+from app.services.output_contracts import OutputContractError, validate_schema
 from app.services.skills import SkillError, get_granted_skills, sync_skill_catalog
 from app.web.admin_page import ADMIN_PAGE
 from app.web.tracking_page import build_tracking_page
@@ -121,6 +122,7 @@ class CreateApiKeyRequest(BaseModel):
     expires_at: datetime | None = None
     chat_tracking: bool = False
     prompt_template_id: uuid.UUID | None = None
+    output_schema: dict | None = None
 
 
 class UpdateApiKeyRequest(BaseModel):
@@ -129,6 +131,7 @@ class UpdateApiKeyRequest(BaseModel):
     file_access: Literal["none", "read_only", "read_write"]
     chat_tracking: bool | None = None
     prompt_template_id: uuid.UUID | None = None
+    output_schema: dict | None = None
 
 
 class CreateApiKeyResponse(BaseModel):
@@ -152,6 +155,7 @@ class ApiKeySummary(BaseModel):
     chat_tracking: bool
     prompt_template_id: uuid.UUID | None = None
     prompt_template_name: str | None = None
+    output_schema: dict | None = None
 
 
 class PromptTemplateRequest(BaseModel):
@@ -591,6 +595,7 @@ async def create_key(
 ) -> CreateApiKeyResponse:
     try:
         await _active_prompt_template(session, payload.prompt_template_id)
+        validate_schema(payload.output_schema)
         record, raw_key = await create_api_key(
             session,
             name=payload.name,
@@ -600,8 +605,9 @@ async def create_key(
             expires_at=payload.expires_at,
             chat_tracking=payload.chat_tracking,
             prompt_template_id=payload.prompt_template_id,
+            output_schema=payload.output_schema,
         )
-    except ApiKeyError as exc:
+    except (ApiKeyError, OutputContractError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return CreateApiKeyResponse(id=record.id, name=record.name, api_key=raw_key, file_access=record.file_access)
 
@@ -628,6 +634,7 @@ async def list_api_keys(session: Annotated[AsyncSession, Depends(get_db_session)
             chat_tracking=record.chat_tracking,
             prompt_template_id=record.prompt_template_id,
             prompt_template_name=templates.get(record.prompt_template_id),
+            output_schema=record.output_schema,
         )
         for record in records
     ]
@@ -657,6 +664,12 @@ async def update_api_key(
     if "prompt_template_id" in payload.model_fields_set:
         await _active_prompt_template(session, payload.prompt_template_id)
         api_key.prompt_template_id = payload.prompt_template_id
+    if "output_schema" in payload.model_fields_set:
+        try:
+            validate_schema(payload.output_schema)
+        except OutputContractError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        api_key.output_schema = payload.output_schema
     if payload.chat_tracking is not None:
         api_key.chat_tracking = payload.chat_tracking
     await session.execute(delete(ApiKeyRole).where(ApiKeyRole.api_key_id == api_key.id))
@@ -675,6 +688,7 @@ async def update_api_key(
         chat_tracking=api_key.chat_tracking,
         prompt_template_id=api_key.prompt_template_id,
         prompt_template_name=(await session.get(PromptTemplate, api_key.prompt_template_id)).name if api_key.prompt_template_id else None,
+        output_schema=api_key.output_schema,
     )
 
 
