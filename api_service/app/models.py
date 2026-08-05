@@ -36,10 +36,30 @@ class ApiKey(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     file_access: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
     chat_tracking: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    prompt_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("platform.prompt_templates.id", ondelete="SET NULL"), index=True
+    )
     notes: Mapped[str | None] = mapped_column(Text)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     roles: Mapped[list["ApiKeyRole"]] = relationship(back_populates="api_key", cascade="all, delete-orphan")
+    prompt_template: Mapped["PromptTemplate | None"] = relationship(back_populates="api_keys")
+
+
+class PromptTemplate(TimestampMixin, Base):
+    """Administrator-managed instructions for one API-key AI capability."""
+
+    __tablename__ = "prompt_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="prompt_template")
 
 
 class RbacRole(TimestampMixin, Base):
@@ -234,6 +254,23 @@ class FeishuUserSkillPermission(Base):
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("platform.feishu_user_profiles.id", ondelete="CASCADE"), primary_key=True)
     skill_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("platform.skills.id", ondelete="CASCADE"), primary_key=True)
+
+
+class FeishuUserKeyProfile(TimestampMixin, Base):
+    """A Feishu user's optional prompt supplement for one API key."""
+
+    __tablename__ = "feishu_user_key_profiles"
+    __table_args__ = (UniqueConstraint("user_id", "api_key_id", name="uq_feishu_user_key_profile"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform.feishu_user_profiles.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform.api_keys.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    prompt_profile: Mapped[str | None] = mapped_column(Text)
 
 
 class FeishuTurn(Base):

@@ -127,6 +127,7 @@ async def create_request_agent(
     skills: list[GrantedSkill] | None = None,
     checkpointer=None,
     mcp_context: dict[str, str] | None = None,
+    system_prompt: str | None = None,
 ):
     """Build an agent for one request, making cross-request privilege leakage impossible."""
     settings = get_settings()
@@ -172,10 +173,11 @@ async def create_request_agent(
         # ensuring an agent can only discover its own granted skills.
         skills=[SKILL_VIRTUAL_ROOT] if granted_skill_files else None,
         backend=StateBackend(),
-        system_prompt=(
-            "You are the Weyeah Agents knowledge assistant. "
-            "When a knowledge-base tool is available and relevant, call it before answering. "
-            "Use only the tools provided for this request. Reply in Chinese unless the user requests another language."
+        system_prompt=system_prompt
+        or (
+            "你是 Weyeah Agents 平台中的 AI 助手。"
+            "只可使用本次请求实际提供且已授权的工具与 Skill。"
+            "默认使用中文回复，除非用户明确要求其他语言。"
         ),
         # PostgreSQL-backed checkpoints are added in the next persistence milestone.
         checkpointer=checkpointer or False,

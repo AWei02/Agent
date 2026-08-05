@@ -47,8 +47,8 @@ ADMIN_PAGE = r'''<!doctype html>
 
       <section data-panel="keys" class="panel hidden space-y-6">
         <div class="grid gap-6 xl:grid-cols-[420px_1fr]"><form id="key-form" class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="text-lg font-semibold">新建 API Key</h2><p class="mt-1 text-sm text-slate-400">Key 一旦离开此页面，就只能禁用或重新创建。</p><label class="mt-5 block text-sm text-slate-300">Key 名称<input required name="name" class="field mt-2" placeholder="财务知识库测试 Key"></label><label class="mt-4 block text-sm text-slate-300">文件权限<select name="file_access" class="field mt-2"><option value="none">none · 不允许文件访问</option><option value="read_only">read_only · 只读</option><option value="read_write">read_write · 读写</option></select></label><p class="mt-4 text-sm text-slate-300">绑定角色</p><div id="key-roles" class="mt-2 space-y-2"></div><button class="primary-btn mt-5 w-full">创建并显示 Key</button></form>
-          <div class="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5"><h2 class="text-lg font-semibold text-emerald-300">新 Key</h2><p class="mt-1 text-sm text-slate-400">请复制到安全的密码管理器；数据库不会保留明文。</p><div id="new-key" class="mt-6 rounded-xl border border-dashed border-emerald-500/30 bg-slate-950 p-4 font-mono text-sm break-all text-emerald-200">尚未创建 API Key</div><button id="copy-key" class="mt-4 rounded-lg border border-emerald-500/40 px-3 py-2 text-sm font-medium text-emerald-300 hover:bg-emerald-500/10">复制 Key</button></div></div>
-        <div class="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60"><div class="border-b border-slate-800 px-5 py-4"><h2 class="text-lg font-semibold">API Key 列表</h2><p class="mt-1 text-sm text-slate-400">禁用立即生效，不能恢复明文。</p></div><div class="overflow-x-auto"><table class="w-full min-w-[720px] text-left text-sm"><thead class="bg-slate-900 text-xs uppercase tracking-wide text-slate-500"><tr><th class="px-5 py-3">名称</th><th class="px-5 py-3">前缀</th><th class="px-5 py-3">权限</th><th class="px-5 py-3">状态</th><th class="px-5 py-3">创建时间</th><th class="px-5 py-3"></th></tr></thead><tbody id="key-list" class="divide-y divide-slate-800"></tbody></table></div></div>
+          <div class="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5"><h2 class="text-lg font-semibold text-emerald-300">新 Key</h2><p class="mt-1 text-sm text-slate-400">请复制到安全的密码管理器妥善保管。</p><div id="new-key" class="mt-6 rounded-xl border border-dashed border-emerald-500/30 bg-slate-950 p-4 font-mono text-sm break-all text-emerald-200">尚未创建 API Key</div><button id="copy-key" class="mt-4 rounded-lg border border-emerald-500/40 px-3 py-2 text-sm font-medium text-emerald-300 hover:bg-emerald-500/10">复制 Key</button></div></div>
+        <div class="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60"><div class="border-b border-slate-800 px-5 py-4"><h2 class="text-lg font-semibold">API Key 列表</h2></div><div class="overflow-x-auto"><table class="w-full min-w-[720px] text-left text-sm"><thead class="bg-slate-900 text-xs uppercase tracking-wide text-slate-500"><tr><th class="px-5 py-3">名称</th><th class="px-5 py-3">前缀</th><th class="px-5 py-3">权限</th><th class="px-5 py-3">状态</th><th class="px-5 py-3">创建时间</th><th class="px-5 py-3"></th></tr></thead><tbody id="key-list" class="divide-y divide-slate-800"></tbody></table></div></div>
       </section>
     </main>
   </div>
@@ -61,7 +61,7 @@ ADMIN_PAGE = r'''<!doctype html>
     const state={roles:[],servers:[],tools:[],keys:[],newKey:''};
     const titles={overview:'平台概览',mcp:'MCP 服务与工具',roles:'角色与授权',keys:'API Keys'};
     const $=s=>document.querySelector(s); const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-    async function api(path,options={}){const response=await fetch('/admin'+path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){let message='请求失败';try{const d=await response.json();message=d.detail||message}catch{message=await response.text()||message}throw Error(message)}return response.status===204?null:response.json()}
+    async function api(path,options={}){const response=await fetch('/admin'+path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){let message='请求失败';const body=await response.text();if(body){try{const data=JSON.parse(body);message=data.detail||message}catch{message=body}}throw Error(message)}return response.status===204?null:response.json()}
     function toast(message,kind='ok'){const el=$('#toast');el.textContent=message;el.className=`fixed bottom-5 right-5 max-w-md rounded-xl border px-4 py-3 text-sm shadow-2xl ${kind==='ok'?'border-emerald-500/40 bg-emerald-950 text-emerald-200':'border-rose-500/40 bg-rose-950 text-rose-200'}`;setTimeout(()=>el.classList.add('hidden'),3500)}
     function toolOrigin(tool){return tool.source==='builtin'?'Deep Agents 内置工具':(state.servers.find(s=>s.id===tool.server_id)?.name||'未知 MCP 服务')}
     function render(){
@@ -111,6 +111,124 @@ ADMIN_PAGE += r'''<script>
   render = () => { originalRender(); document.querySelector('#key-tracking-row')?.remove(); document.querySelector('#key-roles')?.insertAdjacentHTML('beforebegin', '<label id="key-tracking-row" class="mb-4 flex cursor-pointer items-center justify-between text-sm"><span class="font-semibold">跟踪聊天内容</span><input id="key-chat-tracking" type="checkbox" class="peer sr-only"><span class="h-6 w-11 rounded-full bg-slate-700 transition peer-checked:bg-emerald-500 after:ml-1 after:mt-1 after:block after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-5"></span></label>'); drawKeyRows(); };
   document.querySelector('#key-form').onsubmit = async event => { event.preventDefault(); const form = new FormData(event.target); const role_ids = [...document.querySelectorAll('#key-roles input:checked')].map(x => x.value); try { const result = await api('/api-keys', {method:'POST', body:JSON.stringify({name:form.get('name'), file_access:form.get('file_access'), role_ids, chat_tracking:document.querySelector('#key-chat-tracking').checked})}); state.newKey=result.api_key; document.querySelector('#new-key').textContent=result.api_key; event.target.reset(); await loadAll(); } catch (error) { toast(error.message,'error'); } };
   document.querySelector('#edit-key-form').onsubmit = async event => { event.preventDefault(); const id=document.querySelector('#edit-key-id').value; const role_ids=[...document.querySelectorAll('#edit-key-roles input:checked')].map(x=>x.value); try { await api(`/api-keys/${id}`,{method:'PATCH',body:JSON.stringify({file_access:document.querySelector('#edit-key-file-access').value,role_ids})}); document.querySelector('#edit-key-dialog').close(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
+})();
+</script>'''
+
+# This must be the final page enhancement so it owns the Key form handlers.
+ADMIN_PAGE += r'''<script>
+(() => {
+  const options = selected => `<option value="">不绑定模板（仅全局规则）</option>${(state.promptTemplates || []).filter(item => item.is_active || item.id === selected).map(item => `<option value="${item.id}" ${item.id === selected ? 'selected' : ''}>${esc(item.name)}${item.is_active ? '' : '（已停用）'}</option>`).join('')}`;
+  const ensure = () => {
+    const createAnchor = document.querySelector('#key-roles');
+    if (createAnchor && !document.querySelector('#key-prompt-template')) (createAnchor.previousElementSibling || createAnchor).insertAdjacentHTML('beforebegin', '<label class="mb-4 block text-sm text-slate-300">提示词模板<select id="key-prompt-template" class="field mt-2"></select></label>');
+    const createSelect = document.querySelector('#key-prompt-template'); if (createSelect) createSelect.innerHTML = options(createSelect.value || null);
+    const editAnchor = document.querySelector('#edit-key-roles');
+    if (editAnchor && !document.querySelector('#edit-key-prompt-template')) (editAnchor.previousElementSibling || editAnchor).insertAdjacentHTML('beforebegin', '<label class="mb-5 block text-sm text-slate-300">提示词模板<select id="edit-key-prompt-template" class="field mt-2"></select></label>');
+  };
+  const render = window.render;
+  window.render = () => { render(); ensure(); };
+  const openKeyEditor = window.openKeyEditor;
+  window.openKeyEditor = id => { openKeyEditor(id); ensure(); const key = state.keys.find(item => item.id === id); const select = document.querySelector('#edit-key-prompt-template'); if (select) select.innerHTML = options(key?.prompt_template_id || null); };
+  document.querySelector('#key-form').onsubmit = async event => { event.preventDefault(); const form = new FormData(event.target); const role_ids = [...document.querySelectorAll('#key-roles input:checked')].map(item => item.value); try { const result = await api('/api-keys', {method:'POST', body:JSON.stringify({name:form.get('name'), file_access:form.get('file_access'), role_ids, chat_tracking:false, prompt_template_id:document.querySelector('#key-prompt-template')?.value || null})}); state.newKey=result.api_key; document.querySelector('#new-key').textContent=result.api_key; event.target.reset(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
+  document.querySelector('#edit-key-form').onsubmit = async event => { event.preventDefault(); const id=document.querySelector('#edit-key-id').value; const role_ids=[...document.querySelectorAll('#edit-key-roles input:checked')].map(item=>item.value); try { await api(`/api-keys/${id}`, {method:'PATCH', body:JSON.stringify({file_access:document.querySelector('#edit-key-file-access').value, role_ids, chat_tracking:document.querySelector('#edit-key-chat-tracking').checked, prompt_template_id:document.querySelector('#edit-key-prompt-template')?.value || null})}); document.querySelector('#edit-key-dialog').close(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
+  ensure();
+})();
+</script>'''
+
+# Keep template assignment wired after all legacy Key-editor enhancements.
+ADMIN_PAGE += r'''<script>
+(() => {
+  const templateOptions = selected => `<option value="">不绑定模板（仅全局规则）</option>${(state.promptTemplates || []).filter(item => item.is_active || item.id === selected).map(item => `<option value="${item.id}" ${item.id === selected ? 'selected' : ''}>${esc(item.name)}${item.is_active ? '' : '（已停用）'}</option>`).join('')}`;
+  const addTemplateFields = () => {
+    const createAnchor = document.querySelector('#key-roles');
+    if (createAnchor && !document.querySelector('#key-prompt-template')) (createAnchor.previousElementSibling || createAnchor).insertAdjacentHTML('beforebegin', '<label class="mb-4 block text-sm text-slate-300">提示词模板<select id="key-prompt-template" class="field mt-2"></select></label>');
+    const createSelect = document.querySelector('#key-prompt-template'); if (createSelect) createSelect.innerHTML = templateOptions(createSelect.value || null);
+    const editAnchor = document.querySelector('#edit-key-roles');
+    if (editAnchor && !document.querySelector('#edit-key-prompt-template')) (editAnchor.previousElementSibling || editAnchor).insertAdjacentHTML('beforebegin', '<label class="mb-5 block text-sm text-slate-300">提示词模板<select id="edit-key-prompt-template" class="field mt-2"></select></label>');
+  };
+  const baseRender = window.render;
+  window.render = () => { baseRender(); addTemplateFields(); };
+  const baseOpen = window.openKeyEditor;
+  window.openKeyEditor = id => { baseOpen(id); addTemplateFields(); const key = state.keys.find(item => item.id === id); const select = document.querySelector('#edit-key-prompt-template'); if (select) select.innerHTML = templateOptions(key?.prompt_template_id || null); };
+  document.querySelector('#key-form').onsubmit = async event => { event.preventDefault(); const form = new FormData(event.target); const role_ids = [...document.querySelectorAll('#key-roles input:checked')].map(item => item.value); try { const result = await api('/api-keys', {method:'POST', body:JSON.stringify({name:form.get('name'), file_access:form.get('file_access'), role_ids, chat_tracking:false, prompt_template_id:document.querySelector('#key-prompt-template')?.value || null})}); state.newKey = result.api_key; document.querySelector('#new-key').textContent = result.api_key; event.target.reset(); await loadAll(); } catch (error) { toast(error.message, 'error'); } };
+  document.querySelector('#edit-key-form').onsubmit = async event => { event.preventDefault(); const id = document.querySelector('#edit-key-id').value; const role_ids = [...document.querySelectorAll('#edit-key-roles input:checked')].map(item => item.value); try { await api(`/api-keys/${id}`, {method:'PATCH', body:JSON.stringify({file_access:document.querySelector('#edit-key-file-access').value, role_ids, chat_tracking:document.querySelector('#edit-key-chat-tracking').checked, prompt_template_id:document.querySelector('#edit-key-prompt-template')?.value || null})}); document.querySelector('#edit-key-dialog').close(); await loadAll(); } catch (error) { toast(error.message, 'error'); } };
+  addTemplateFields();
+})();
+</script>'''
+
+# Keep the Key creation guidance focused on templates and RBAC rather than
+# the legacy one-time-key warning.
+ADMIN_PAGE += r'''<script>
+setTimeout(() => {
+  const form = document.querySelector('#key-form');
+  const description = form?.querySelector('h2')?.nextElementSibling;
+  if (description) description.textContent = '提示词模板确定 AI 的工作方式；角色控制 Tool 与 Skill 的访问权限。';
+  form?.querySelectorAll('#key-prompt-template + span').forEach(item => item.remove());
+}, 0);
+</script>'''
+
+# Prompt templates are managed independently from permissions, then assigned
+# to API keys.  This final enhancement also keeps the existing compact page
+# markup backwards-compatible.
+ADMIN_PAGE += r'''<script>
+(() => {
+  state.promptTemplates = [];
+  const previousLoadAll = window.loadAll;
+  window.loadAll = async () => {
+    await previousLoadAll();
+    try { state.promptTemplates = await api('/prompt-templates'); window.render(); }
+    catch (error) { toast(error.message, 'error'); }
+  };
+  const nav = document.querySelector('#nav'), main = document.querySelector('main');
+  const button = document.createElement('button');
+  button.type = 'button'; button.dataset.view = 'prompts';
+  button.className = 'nav-btn w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium'; button.textContent = '提示词管理';
+  const keyButton = nav.querySelector('[data-view="keys"]');
+  keyButton?.insertAdjacentElement('beforebegin', button) || nav.appendChild(button);
+  // The static API Key navigation is available after the base page loads;
+  // keep prompt management immediately ahead of it.
+  setTimeout(() => nav.querySelector('[data-view="keys"]')?.insertAdjacentElement('beforebegin', button), 0);
+  const panel = document.createElement('section'); panel.dataset.panel = 'prompts'; panel.className = 'panel hidden space-y-6';
+  panel.innerHTML = `<div class="flex flex-wrap items-start justify-between gap-4"><div><h2 class="text-xl font-semibold">提示词模板</h2><p class="mt-2 text-sm text-slate-400">模板定义 AI 的工作方式；Tool 和 Skill 权限仍由 API Key 的角色决定。</p></div><button id="create-prompt-template" class="primary-btn">新建模板</button></div><div id="prompt-template-list" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"></div>`;
+  main.appendChild(panel);
+  const dialog = document.createElement('dialog'); dialog.id = 'prompt-template-dialog';
+  dialog.className = 'w-[min(94vw,760px)] rounded-2xl border border-slate-700 bg-slate-900 p-0 text-slate-100 shadow-2xl backdrop:bg-slate-950/80';
+  dialog.innerHTML = `<form id="prompt-template-form" class="space-y-4 p-6"><div class="flex items-start justify-between gap-4"><div><h2 id="prompt-template-dialog-title" class="text-xl font-semibold">新建提示词模板</h2><p class="mt-1 text-sm text-slate-400">全局平台规则会自动叠加在模板之前。</p></div><button type="button" onclick="document.querySelector('#prompt-template-dialog').close()" class="text-xl text-slate-400 hover:text-white">×</button></div><label class="block text-sm">模板名称<input id="prompt-template-name" required maxlength="120" class="field mt-2" placeholder="企业知识助手"></label><label class="block text-sm">模板标识<input id="prompt-template-slug" required maxlength="100" pattern="[A-Za-z0-9_-]+" class="field mt-2" placeholder="knowledge_assistant"></label><label class="block text-sm">说明<textarea id="prompt-template-description" maxlength="2000" rows="2" class="field mt-2" placeholder="适用场景和管理员说明"></textarea></label><label class="block text-sm">系统提示词<textarea id="prompt-template-content" required maxlength="16000" rows="12" class="field mt-2 font-mono" placeholder="定义角色、流程、回答风格和输出格式"></textarea></label><label class="flex items-center gap-2 text-sm"><input id="prompt-template-active" type="checkbox" checked> 启用此模板</label><div class="flex justify-end gap-3"><button type="button" onclick="document.querySelector('#prompt-template-dialog').close()" class="rounded-lg border border-slate-700 px-4 py-2">取消</button><button class="primary-btn">保存模板</button></div></form>`;
+  document.body.appendChild(dialog);
+  const templateOptions = (selected = null) => `<option value="">不绑定模板（仅全局规则）</option>${state.promptTemplates.filter(item => item.is_active || item.id === selected).map(item => `<option value="${item.id}" ${item.id === selected ? 'selected' : ''}>${esc(item.name)}${item.is_active ? '' : '（已停用）'}</option>`).join('')}`;
+  function ensureKeyTemplateFields() {
+    const createAnchor = document.querySelector('#key-roles');
+    if (createAnchor && !document.querySelector('#key-prompt-template')) (createAnchor.previousElementSibling || createAnchor).insertAdjacentHTML('beforebegin', `<label class="mb-4 block text-sm text-slate-300">提示词模板<select id="key-prompt-template" class="field mt-2">${templateOptions()}</select></label>`);
+    const editAnchor = document.querySelector('#edit-key-roles');
+    if (editAnchor && !document.querySelector('#edit-key-prompt-template')) (editAnchor.previousElementSibling || editAnchor).insertAdjacentHTML('beforebegin', `<label class="mb-5 block text-sm text-slate-300">提示词模板<select id="edit-key-prompt-template" class="field mt-2"></select></label>`);
+    const createSelect = document.querySelector('#key-prompt-template'); if (createSelect) createSelect.innerHTML = templateOptions(createSelect.value || null);
+  }
+  function drawTemplates() {
+    const host = document.querySelector('#prompt-template-list'); if (!host) return;
+    host.innerHTML = state.promptTemplates.length ? state.promptTemplates.map(template => `<article class="rounded-2xl border ${template.is_active ? 'border-slate-800 bg-slate-900/60' : 'border-slate-800/70 bg-slate-950/60'} p-5"><div class="flex items-start justify-between gap-3"><div><h3 class="font-semibold">${esc(template.name)}</h3><p class="mt-1 font-mono text-xs text-emerald-300">${esc(template.slug)}</p></div><span class="rounded-full px-2 py-1 text-xs ${template.is_active ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-700 text-slate-400'}">${template.is_active ? '已启用' : '已停用'}</span></div><p class="mt-3 min-h-10 text-sm text-slate-400">${esc(template.description || '暂无说明')}</p><div class="mt-4 flex items-center justify-between text-xs text-slate-500"><span>已绑定 ${template.api_key_count} 个 Key</span><span>v${template.version}</span></div><button data-prompt-edit="${template.id}" class="mt-4 rounded-lg border border-slate-700 px-3 py-2 text-sm text-sky-300 hover:border-sky-400">编辑模板</button></article>`).join('') : '<p class="rounded-xl border border-dashed border-slate-700 p-8 text-center text-sm text-slate-500">尚未创建提示词模板。</p>';
+    host.querySelectorAll('[data-prompt-edit]').forEach(item => item.onclick = () => openTemplate(item.dataset.promptEdit));
+  }
+  function openTemplate(id = null) {
+    const template = state.promptTemplates.find(item => item.id === id);
+    dialog.dataset.templateId = template?.id || '';
+    document.querySelector('#prompt-template-dialog-title').textContent = template ? '编辑提示词模板' : '新建提示词模板';
+    document.querySelector('#prompt-template-name').value = template?.name || '';
+    document.querySelector('#prompt-template-slug').value = template?.slug || '';
+    document.querySelector('#prompt-template-description').value = template?.description || '';
+    document.querySelector('#prompt-template-content').value = template?.system_prompt || '';
+    document.querySelector('#prompt-template-active').checked = template?.is_active ?? true;
+    dialog.showModal();
+  }
+  document.querySelector('#create-prompt-template').onclick = () => openTemplate();
+  document.querySelector('#prompt-template-form').onsubmit = async event => { event.preventDefault(); const id = dialog.dataset.templateId; const payload = {name:document.querySelector('#prompt-template-name').value.trim(), slug:document.querySelector('#prompt-template-slug').value.trim(), description:document.querySelector('#prompt-template-description').value.trim() || null, system_prompt:document.querySelector('#prompt-template-content').value.trim(), is_active:document.querySelector('#prompt-template-active').checked}; try { await api(id ? `/prompt-templates/${id}` : '/prompt-templates', {method:id ? 'PATCH' : 'POST', body:JSON.stringify(payload)}); dialog.close(); await loadAll(); toast('提示词模板已保存'); } catch (error) { toast(error.message, 'error'); } };
+  const priorRender = window.render;
+  window.render = () => { priorRender(); ensureKeyTemplateFields(); drawTemplates(); };
+  const priorOpenKeyEditor = window.openKeyEditor;
+  window.openKeyEditor = id => { priorOpenKeyEditor(id); ensureKeyTemplateFields(); const key = state.keys.find(item => item.id === id); const select = document.querySelector('#edit-key-prompt-template'); if (select) select.innerHTML = templateOptions(key?.prompt_template_id || null); };
+  document.querySelector('#key-form').onsubmit = async event => { event.preventDefault(); const form = new FormData(event.target); const role_ids = [...document.querySelectorAll('#key-roles input:checked')].map(item => item.value); try { const result = await api('/api-keys', {method:'POST', body:JSON.stringify({name:form.get('name'), file_access:form.get('file_access'), role_ids, chat_tracking:false, prompt_template_id:document.querySelector('#key-prompt-template')?.value || null})}); state.newKey = result.api_key; document.querySelector('#new-key').textContent = result.api_key; event.target.reset(); await loadAll(); } catch (error) { toast(error.message, 'error'); } };
+  document.querySelector('#edit-key-form').onsubmit = async event => { event.preventDefault(); const id = document.querySelector('#edit-key-id').value; const role_ids = [...document.querySelectorAll('#edit-key-roles input:checked')].map(item => item.value); try { await api(`/api-keys/${id}`, {method:'PATCH', body:JSON.stringify({file_access:document.querySelector('#edit-key-file-access').value, role_ids, chat_tracking:document.querySelector('#edit-key-chat-tracking').checked, prompt_template_id:document.querySelector('#edit-key-prompt-template')?.value || null})}); document.querySelector('#edit-key-dialog').close(); await loadAll(); } catch (error) { toast(error.message, 'error'); } };
+  button.onclick = () => { document.querySelectorAll('.panel').forEach(item => item.classList.toggle('hidden', item !== panel)); document.querySelectorAll('.nav-btn').forEach(item => item.classList.toggle('active', item === button)); document.querySelector('#page-title').textContent = '提示词管理'; drawTemplates(); };
+  loadAll();
 })();
 </script>'''
 
@@ -295,6 +413,9 @@ ADMIN_PAGE += r'''<script>
       const extras = user.extra_tool_ids.map(id => state.tools.find(tool => tool.id === id)?.name).filter(Boolean);
       return `<tr><td class="px-5 py-4"><p class="font-semibold">${esc(user.display_name)}</p><p class="mt-1 font-mono text-xs text-slate-500">${esc(user.open_id)}</p></td><td>${roles.map(chip).join('') || '—'}</td><td>${extras.map(chip).join('') || '—'}</td><td>${user.effective_tools.map(tool => chip(tool.name)).join('') || '—'}</td><td><a class="text-sky-300 hover:text-sky-200" href="/admin/feishu-users/${user.id}/sessions/view">${user.session_count} 个会话</a></td><td><span class="rounded-full px-2 py-1 text-xs ${user.is_active ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-700 text-slate-400'}">${user.is_active ? '启用' : '禁用'}</span></td><td><button data-feishu-edit="${user.id}" class="text-sky-300 hover:text-sky-200">编辑</button></td></tr>`;
     }).join('') : '<tr><td colspan="7" class="px-5 py-12 text-center text-slate-500">飞书用户发送第一条消息后会自动出现在这里。</td></tr>';
+    const header = panel.querySelector('thead tr');
+    if (header && !header.querySelector('[data-feishu-keys-header]')) header.children[header.children.length - 1].insertAdjacentHTML('beforebegin', '<th data-feishu-keys-header>已配置 Key</th>');
+    rows.querySelectorAll('tr').forEach((row, index) => { const user = users[index]; if (!user || row.querySelector('[data-feishu-keys-cell]')) return; const keys = (user.key_profiles || []).map(profile => chip(profile.api_key_name)).join('') || '—'; row.children[row.children.length - 1].insertAdjacentHTML('beforebegin', `<td data-feishu-keys-cell>${keys}</td>`); });
     rows.querySelectorAll('[data-feishu-edit]').forEach(element => element.onclick = () => editFeishuUser(element.dataset.feishuEdit));
   }
   function editFeishuUser(id) {
@@ -305,12 +426,16 @@ ADMIN_PAGE += r'''<script>
     document.querySelector('#feishu-user-roles').innerHTML = state.roles.map(role => `<label><input type="checkbox" value="${role.id}" ${editingUser.role_ids.includes(role.id) ? 'checked' : ''}> ${esc(role.name)}</label>`).join('');
     document.querySelector('#feishu-user-tools').innerHTML = state.tools.map(tool => `<label><input type="checkbox" value="${tool.id}" ${editingUser.extra_tool_ids.includes(tool.id) ? 'checked' : ''}> ${esc(tool.name)}</label>`).join('');
     document.querySelector('#feishu-user-skills').innerHTML = (state.skills || []).map(skill => `<label><input type="checkbox" value="${skill.id}" ${(editingUser.extra_skill_ids || []).includes(skill.id) ? 'checked' : ''}> ${esc(skill.name)}</label>`).join('') || '<span class="text-sm text-slate-500">暂无已登记 Skill</span>';
+    document.querySelector('#feishu-user-key-profiles')?.remove();
+    const configured = new Map((editingUser.key_profiles || []).map(profile => [profile.api_key_id, profile]));
+    document.querySelector('#feishu-user-skills').insertAdjacentHTML('afterend', `<div id="feishu-user-key-profiles" class="mt-5"><p class="text-sm">按 Key 的个性化提示词</p><p class="mt-1 text-xs text-slate-500">仅影响当前 Key 的回答偏好，不会改变 Tool 或 Skill 权限。</p><div class="mt-3 space-y-3">${(state.keys || []).filter(key => key.is_active).map(key => { const profile = configured.get(key.id); return `<label class="block rounded-xl border border-slate-700 bg-slate-950 p-3"><span class="flex items-center gap-2"><input data-key-profile-enabled="${key.id}" type="checkbox" ${profile ? 'checked' : ''}><span class="font-medium">${esc(key.name)}</span><span class="text-xs text-slate-500">${esc(key.prompt_template_name || '仅全局规则')}</span></span><textarea data-key-profile-prompt="${key.id}" maxlength="4000" rows="3" class="field mt-3" placeholder="该用户在此 Key 下的工作偏好">${esc(profile?.prompt_profile || '')}</textarea></label>`; }).join('') || '<p class="text-sm text-slate-500">暂无可配置的启用 Key。</p>'}</div></div>`);
     document.querySelector('#feishu-user-dialog').showModal();
   }
   document.querySelector('#save-feishu-user').onclick = async () => {
     if (!editingUser) return;
     const checked = selector => [...document.querySelectorAll(selector + ' input:checked')].map(item => item.value);
-    try { await api(`/feishu-users/${editingUser.id}`, {method:'PUT', body:JSON.stringify({role_ids:checked('#feishu-user-roles'), extra_tool_ids:checked('#feishu-user-tools'), extra_skill_ids:checked('#feishu-user-skills'), is_active:document.querySelector('#feishu-user-active').checked})}); document.querySelector('#feishu-user-dialog').close(); await loadFeishuUsers(); toast('飞书用户权限已保存'); } catch (error) { toast(error.message, 'error'); }
+    const key_profiles = [...document.querySelectorAll('[data-key-profile-enabled]:checked')].map(input => ({api_key_id:input.dataset.keyProfileEnabled, is_active:true, prompt_profile:document.querySelector(`[data-key-profile-prompt="${input.dataset.keyProfileEnabled}"]`).value.trim() || null}));
+    try { await api(`/feishu-users/${editingUser.id}`, {method:'PUT', body:JSON.stringify({role_ids:checked('#feishu-user-roles'), extra_tool_ids:checked('#feishu-user-tools'), extra_skill_ids:checked('#feishu-user-skills'), key_profiles, is_active:document.querySelector('#feishu-user-active').checked})}); document.querySelector('#feishu-user-dialog').close(); await loadFeishuUsers(); toast('飞书用户权限已保存'); } catch (error) { toast(error.message, 'error'); }
   };
   button.onclick = async () => { document.querySelectorAll('.panel').forEach(item => item.classList.toggle('hidden', item !== panel)); document.querySelectorAll('.nav-btn').forEach(item => item.classList.toggle('active', item === button)); document.querySelector('#page-title').textContent = '飞书用户管理'; try { await loadFeishuUsers(); } catch (error) { toast(error.message, 'error'); } };
 })();
@@ -326,14 +451,19 @@ ADMIN_PAGE += r'''<script>
     const key = state.keys.find(item => item.id === id); if (!key) return;
     document.querySelector('#edit-key-id').value = id;
     document.querySelector('#edit-key-name').textContent = key.name + ' · ' + key.key_prefix + '…';
+    document.querySelector('#edit-key-display-name-field')?.remove();
+    document.querySelector('#edit-key-file-access').closest('label').insertAdjacentHTML('beforebegin', '<label id="edit-key-display-name-field" class="mb-5 block text-sm text-slate-300">Key 名称<input id="edit-key-display-name" required maxlength="120" class="field mt-2"></label>');
+    document.querySelector('#edit-key-display-name').value = key.name;
     document.querySelector('#edit-key-file-access').value = key.file_access;
     document.querySelector('#edit-key-tracking-row')?.remove();
     document.querySelector('#edit-key-file-access').closest('label').insertAdjacentHTML('beforebegin', '<label id="edit-key-tracking-row" class="mb-5 flex cursor-pointer items-center justify-between text-sm"><span class="font-semibold">跟踪聊天内容</span><input id="edit-key-chat-tracking" type="checkbox" class="peer sr-only"><span class="h-6 w-11 rounded-full bg-slate-700 transition peer-checked:bg-emerald-500 after:ml-1 after:mt-1 after:block after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-5"></span></label>');
     document.querySelector('#edit-key-chat-tracking').checked = Boolean(key.chat_tracking);
+    const promptTemplate = document.querySelector('#edit-key-prompt-template');
+    if (promptTemplate) promptTemplate.innerHTML = `<option value="">不绑定模板（仅全局规则）</option>${(state.promptTemplates || []).filter(item => item.is_active || item.id === key.prompt_template_id).map(item => `<option value="${item.id}" ${item.id === key.prompt_template_id ? 'selected' : ''}>${esc(item.name)}${item.is_active ? '' : '（已停用）'}</option>`).join('')}`;
     document.querySelector('#edit-key-roles').innerHTML = state.roles.map(role => `<label class="flex gap-3"><input type="checkbox" value="${role.id}" ${key.role_ids.includes(role.id) ? 'checked' : ''}><span>${esc(role.name)}</span></label>`).join('');
     document.querySelector('#edit-key-dialog').showModal();
   };
-  document.querySelector('#key-form').onsubmit = async event => { event.preventDefault(); const form=new FormData(event.target); const role_ids=[...document.querySelectorAll('#key-roles input:checked')].map(node=>node.value); try { const result=await api('/api-keys',{method:'POST',body:JSON.stringify({name:form.get('name'),file_access:form.get('file_access'),role_ids,chat_tracking:false})}); state.newKey=result.api_key; document.querySelector('#new-key').textContent=result.api_key; event.target.reset(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
-  document.querySelector('#edit-key-form').onsubmit = async event => { event.preventDefault(); const id=document.querySelector('#edit-key-id').value; const role_ids=[...document.querySelectorAll('#edit-key-roles input:checked')].map(node=>node.value); try { await api(`/api-keys/${id}`,{method:'PATCH',body:JSON.stringify({file_access:document.querySelector('#edit-key-file-access').value,role_ids,chat_tracking:document.querySelector('#edit-key-chat-tracking').checked})}); document.querySelector('#edit-key-dialog').close(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
+  document.querySelector('#key-form').onsubmit = async event => { event.preventDefault(); const form=new FormData(event.target); const role_ids=[...document.querySelectorAll('#key-roles input:checked')].map(node=>node.value); try { const result=await api('/api-keys',{method:'POST',body:JSON.stringify({name:form.get('name'),file_access:form.get('file_access'),role_ids,chat_tracking:false,prompt_template_id:document.querySelector('#key-prompt-template')?.value || null})}); state.newKey=result.api_key; document.querySelector('#new-key').textContent=result.api_key; event.target.reset(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
+  document.querySelector('#edit-key-form').onsubmit = async event => { event.preventDefault(); const id=document.querySelector('#edit-key-id').value; const role_ids=[...document.querySelectorAll('#edit-key-roles input:checked')].map(node=>node.value); try { await api(`/api-keys/${id}`,{method:'PATCH',body:JSON.stringify({name:document.querySelector('#edit-key-display-name').value.trim(),file_access:document.querySelector('#edit-key-file-access').value,role_ids,chat_tracking:document.querySelector('#edit-key-chat-tracking').checked,prompt_template_id:document.querySelector('#edit-key-prompt-template')?.value || null})}); document.querySelector('#edit-key-dialog').close(); await loadAll(); } catch(error) { toast(error.message,'error'); } };
 })();
 </script>'''

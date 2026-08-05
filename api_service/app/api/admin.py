@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_db_session
-from app.models import ApiAuditSession, ApiAuditTurn, ApiKey, ApiKeyRole, FeishuSession, FeishuTurn, FeishuUserProfile, FeishuUserRole, FeishuUserSkillPermission, FeishuUserToolPermission, McpCatalogTool, McpServer, RbacRole, RbacRolePermission, RbacRoleSkill, Skill
+from app.models import ApiAuditSession, ApiAuditTurn, ApiKey, ApiKeyRole, FeishuSession, FeishuTurn, FeishuUserKeyProfile, FeishuUserProfile, FeishuUserRole, FeishuUserSkillPermission, FeishuUserToolPermission, McpCatalogTool, McpServer, PromptTemplate, RbacRole, RbacRolePermission, RbacRoleSkill, Skill
 from app.services.mcp_catalog import McpCatalogError, sync_mcp_catalog
 from app.services.builtin_tools import ensure_builtin_tool_catalog
 from app.services.api_keys import ApiKeyError, AuthorizedSubject, apply_file_access_cap, authenticate_api_key, create_api_key, get_granted_tools
@@ -119,12 +119,15 @@ class CreateApiKeyRequest(BaseModel):
     notes: str | None = None
     expires_at: datetime | None = None
     chat_tracking: bool = False
+    prompt_template_id: uuid.UUID | None = None
 
 
 class UpdateApiKeyRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
     role_ids: list[uuid.UUID] = Field(default_factory=list)
     file_access: Literal["none", "read_only", "read_write"]
     chat_tracking: bool | None = None
+    prompt_template_id: uuid.UUID | None = None
 
 
 class CreateApiKeyResponse(BaseModel):
@@ -146,6 +149,42 @@ class ApiKeySummary(BaseModel):
     expires_at: datetime | None
     role_ids: list[uuid.UUID] = Field(default_factory=list)
     chat_tracking: bool
+    prompt_template_id: uuid.UUID | None = None
+    prompt_template_name: str | None = None
+
+
+class PromptTemplateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    description: str | None = Field(default=None, max_length=2000)
+    system_prompt: str = Field(min_length=1, max_length=16000)
+    is_active: bool = True
+
+
+class PromptTemplateResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    description: str | None
+    system_prompt: str
+    version: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    api_key_count: int = 0
+
+
+class FeishuUserKeyProfileRequest(BaseModel):
+    api_key_id: uuid.UUID
+    is_active: bool = True
+    prompt_profile: str | None = Field(default=None, max_length=4000)
+
+
+class FeishuUserKeyProfileResponse(BaseModel):
+    api_key_id: uuid.UUID
+    api_key_name: str
+    is_active: bool
+    prompt_profile: str | None
 
 
 class FeishuUserUpdateRequest(BaseModel):
@@ -153,6 +192,7 @@ class FeishuUserUpdateRequest(BaseModel):
     extra_tool_ids: list[uuid.UUID] = Field(default_factory=list)
     extra_skill_ids: list[uuid.UUID] = Field(default_factory=list)
     is_active: bool = True
+    key_profiles: list[FeishuUserKeyProfileRequest] = Field(default_factory=list)
 
 
 class FeishuUserSummary(BaseModel):
@@ -167,6 +207,7 @@ class FeishuUserSummary(BaseModel):
     effective_skills: list[dict[str, str]]
     session_count: int
     is_active: bool
+    key_profiles: list[FeishuUserKeyProfileResponse] = Field(default_factory=list)
 
 
 class SessionVisibilityRequest(BaseModel):
@@ -387,11 +428,77 @@ async def set_role_skills(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+def _prompt_template_response(template: PromptTemplate, api_key_count: int = 0) -> PromptTemplateResponse:
+    return PromptTemplateResponse(
+        id=template.id,
+        name=template.name,
+        slug=template.slug,
+        description=template.description,
+        system_prompt=template.system_prompt,
+        version=template.version,
+        is_active=template.is_active,
+        created_at=template.created_at,
+        updated_at=template.updated_at,
+        api_key_count=api_key_count,
+    )
+
+
+async def _active_prompt_template(session: AsyncSession, template_id: uuid.UUID | None) -> PromptTemplate | None:
+    if template_id is None:
+        return None
+    template = await session.get(PromptTemplate, template_id)
+    if template is None or not template.is_active:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Active prompt template not found")
+    return template
+
+
+@router.post("/prompt-templates", response_model=PromptTemplateResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
+async def create_prompt_template(
+    payload: PromptTemplateRequest, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> PromptTemplateResponse:
+    template = PromptTemplate(
+        name=payload.name.strip(), slug=payload.slug.strip().lower(), description=payload.description, system_prompt=payload.system_prompt.strip(), is_active=payload.is_active
+    )
+    session.add(template)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prompt template name or slug already exists") from exc
+    return _prompt_template_response(template)
+
+
+@router.get("/prompt-templates", response_model=list[PromptTemplateResponse], dependencies=[Depends(require_admin)])
+async def list_prompt_templates(session: Annotated[AsyncSession, Depends(get_db_session)]) -> list[PromptTemplateResponse]:
+    templates = (await session.scalars(select(PromptTemplate).order_by(PromptTemplate.name))).all()
+    counts = dict((await session.execute(select(ApiKey.prompt_template_id, func.count()).where(ApiKey.prompt_template_id.is_not(None)).group_by(ApiKey.prompt_template_id))).all())
+    return [_prompt_template_response(template, int(counts.get(template.id, 0))) for template in templates]
+
+
+@router.patch("/prompt-templates/{template_id}", response_model=PromptTemplateResponse, dependencies=[Depends(require_admin)])
+async def update_prompt_template(
+    template_id: uuid.UUID, payload: PromptTemplateRequest, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> PromptTemplateResponse:
+    template = await session.get(PromptTemplate, template_id)
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prompt template not found")
+    template.name, template.slug = payload.name.strip(), payload.slug.strip().lower()
+    template.description, template.system_prompt, template.is_active = payload.description, payload.system_prompt.strip(), payload.is_active
+    template.version += 1
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prompt template name or slug already exists") from exc
+    await session.refresh(template)
+    count = await session.scalar(select(func.count()).select_from(ApiKey).where(ApiKey.prompt_template_id == template.id))
+    return _prompt_template_response(template, int(count or 0))
+
+
 @router.post("/api-keys", response_model=CreateApiKeyResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 async def create_key(
     payload: CreateApiKeyRequest, session: Annotated[AsyncSession, Depends(get_db_session)]
 ) -> CreateApiKeyResponse:
     try:
+        await _active_prompt_template(session, payload.prompt_template_id)
         record, raw_key = await create_api_key(
             session,
             name=payload.name,
@@ -400,6 +507,7 @@ async def create_key(
             notes=payload.notes,
             expires_at=payload.expires_at,
             chat_tracking=payload.chat_tracking,
+            prompt_template_id=payload.prompt_template_id,
         )
     except ApiKeyError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
@@ -413,6 +521,7 @@ async def list_api_keys(session: Annotated[AsyncSession, Depends(get_db_session)
     role_ids_by_key: dict[uuid.UUID, list[uuid.UUID]] = {}
     for api_key_id, role_id in role_rows:
         role_ids_by_key.setdefault(api_key_id, []).append(role_id)
+    templates = {item.id: item.name for item in (await session.scalars(select(PromptTemplate))).all()}
     return [
         ApiKeySummary(
             id=record.id,
@@ -425,6 +534,8 @@ async def list_api_keys(session: Annotated[AsyncSession, Depends(get_db_session)
             expires_at=record.expires_at,
             role_ids=role_ids_by_key.get(record.id, []),
             chat_tracking=record.chat_tracking,
+            prompt_template_id=record.prompt_template_id,
+            prompt_template_name=templates.get(record.prompt_template_id),
         )
         for record in records
     ]
@@ -449,6 +560,11 @@ async def update_api_key(
         if len(roles) != len(normalized_role_ids):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="One or more active roles do not exist")
     api_key.file_access = payload.file_access
+    if payload.name is not None:
+        api_key.name = payload.name.strip()
+    if "prompt_template_id" in payload.model_fields_set:
+        await _active_prompt_template(session, payload.prompt_template_id)
+        api_key.prompt_template_id = payload.prompt_template_id
     if payload.chat_tracking is not None:
         api_key.chat_tracking = payload.chat_tracking
     await session.execute(delete(ApiKeyRole).where(ApiKeyRole.api_key_id == api_key.id))
@@ -465,6 +581,8 @@ async def update_api_key(
         expires_at=api_key.expires_at,
         role_ids=normalized_role_ids,
         chat_tracking=api_key.chat_tracking,
+        prompt_template_id=api_key.prompt_template_id,
+        prompt_template_name=(await session.get(PromptTemplate, api_key.prompt_template_id)).name if api_key.prompt_template_id else None,
     )
 
 
@@ -503,6 +621,14 @@ async def _feishu_summary(user: FeishuUserProfile, session: AsyncSession) -> Fei
     role_ids = list((await session.scalars(select(FeishuUserRole.role_id).where(FeishuUserRole.user_id == user.id))).all())
     extra_tool_ids = list((await session.scalars(select(FeishuUserToolPermission.tool_id).where(FeishuUserToolPermission.user_id == user.id))).all())
     extra_skill_ids = list((await session.scalars(select(FeishuUserSkillPermission.skill_id).where(FeishuUserSkillPermission.user_id == user.id))).all())
+    key_profiles = (
+        await session.execute(
+            select(FeishuUserKeyProfile, ApiKey.name)
+            .join(ApiKey, ApiKey.id == FeishuUserKeyProfile.api_key_id)
+            .where(FeishuUserKeyProfile.user_id == user.id)
+            .order_by(ApiKey.name)
+        )
+    ).all()
     platform_key = os.getenv("FEISHU_PLATFORM_API_KEY", "")
     effective_tools: list[dict[str, str]] = []
     effective_skills: list[dict[str, str]] = []
@@ -526,7 +652,12 @@ async def _feishu_summary(user: FeishuUserProfile, session: AsyncSession) -> Fei
         except (ApiKeyError, SkillError):
             pass
     count = await session.scalar(select(func.count()).select_from(FeishuSession).where(FeishuSession.tenant_key == user.tenant_key, FeishuSession.open_id == user.open_id))
-    return FeishuUserSummary(id=user.id, display_name=user.display_name, open_id=user.open_id, avatar_url=user.avatar_url, role_ids=role_ids, extra_tool_ids=extra_tool_ids, extra_skill_ids=extra_skill_ids, effective_tools=effective_tools, effective_skills=effective_skills, session_count=int(count or 0), is_active=user.is_active)
+    return FeishuUserSummary(
+        id=user.id, display_name=user.display_name, open_id=user.open_id, avatar_url=user.avatar_url,
+        role_ids=role_ids, extra_tool_ids=extra_tool_ids, extra_skill_ids=extra_skill_ids,
+        effective_tools=effective_tools, effective_skills=effective_skills, session_count=int(count or 0), is_active=user.is_active,
+        key_profiles=[FeishuUserKeyProfileResponse(api_key_id=profile.api_key_id, api_key_name=key_name, is_active=profile.is_active, prompt_profile=profile.prompt_profile) for profile, key_name in key_profiles],
+    )
 
 
 @router.get("/feishu-users", response_model=list[FeishuUserSummary], dependencies=[Depends(require_admin)])
@@ -541,6 +672,7 @@ async def update_feishu_user(user_id: uuid.UUID, payload: FeishuUserUpdateReques
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feishu user not found")
     role_ids, tool_ids, skill_ids = list(dict.fromkeys(payload.role_ids)), list(dict.fromkeys(payload.extra_tool_ids)), list(dict.fromkeys(payload.extra_skill_ids))
+    profiles = {item.api_key_id: item for item in payload.key_profiles}
     if role_ids:
         if len((await session.scalars(select(RbacRole.id).where(RbacRole.id.in_(role_ids), RbacRole.is_active.is_(True)))).all()) != len(role_ids):
             raise HTTPException(status_code=422, detail="One or more active roles do not exist")
@@ -550,13 +682,25 @@ async def update_feishu_user(user_id: uuid.UUID, payload: FeishuUserUpdateReques
     if skill_ids:
         if len((await session.scalars(select(Skill.id).where(Skill.id.in_(skill_ids), Skill.is_active.is_(True)))).all()) != len(skill_ids):
             raise HTTPException(status_code=422, detail="One or more active skills do not exist")
+    if profiles:
+        active_keys = (await session.scalars(select(ApiKey.id).where(ApiKey.id.in_(profiles), ApiKey.is_active.is_(True)))).all()
+        if len(active_keys) != len(profiles):
+            raise HTTPException(status_code=422, detail="One or more active API keys do not exist")
     user.is_active = payload.is_active
     await session.execute(delete(FeishuUserRole).where(FeishuUserRole.user_id == user.id))
     await session.execute(delete(FeishuUserToolPermission).where(FeishuUserToolPermission.user_id == user.id))
     await session.execute(delete(FeishuUserSkillPermission).where(FeishuUserSkillPermission.user_id == user.id))
+    await session.execute(delete(FeishuUserKeyProfile).where(FeishuUserKeyProfile.user_id == user.id))
     session.add_all(FeishuUserRole(user_id=user.id, role_id=role_id) for role_id in role_ids)
     session.add_all(FeishuUserToolPermission(user_id=user.id, tool_id=tool_id) for tool_id in tool_ids)
     session.add_all(FeishuUserSkillPermission(user_id=user.id, skill_id=skill_id) for skill_id in skill_ids)
+    session.add_all(
+        FeishuUserKeyProfile(
+            user_id=user.id, api_key_id=profile.api_key_id, is_active=profile.is_active,
+            prompt_profile=profile.prompt_profile.strip() if profile.prompt_profile and profile.prompt_profile.strip() else None,
+        )
+        for profile in profiles.values()
+    )
     await session.flush()
     return await _feishu_summary(user, session)
 

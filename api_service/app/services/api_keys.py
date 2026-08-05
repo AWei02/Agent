@@ -69,6 +69,7 @@ async def create_api_key(
     notes: str | None = None,
     expires_at: datetime | None = None,
     chat_tracking: bool = False,
+    prompt_template_id: uuid.UUID | None = None,
 ) -> tuple[ApiKey, str]:
     """Create an API key and retain its value for the protected admin console."""
     if file_access not in VALID_FILE_ACCESS:
@@ -94,6 +95,7 @@ async def create_api_key(
         notes=notes,
         expires_at=expires_at,
         chat_tracking=chat_tracking,
+        prompt_template_id=prompt_template_id,
     )
     session.add(record)
     await session.flush()

@@ -22,6 +22,7 @@ from app.auth.dependencies import get_api_key_subject
 from app.db import get_db_session
 from app.services.api_keys import AuthorizedSubject, get_granted_tools
 from app.services.skills import SkillError, get_granted_skills
+from app.services.prompts import get_request_system_prompt
 from app.services.audit import record_turn
 from app.services.observability import langfuse_callbacks, observe_chat_request, record_chat_output
 from app.models import FeishuSession, FeishuTurn, FeishuUserProfile
@@ -92,6 +93,9 @@ async def chat_completions(
         granted_skills = await get_granted_skills(session, subject, feishu_user_id=feishu_user.id if feishu_user else None)
     except SkillError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    system_prompt = await get_request_system_prompt(
+        session, subject, feishu_user_id=feishu_user.id if feishu_user else None
+    )
     mcp_context = None
     if feishu_user is not None:
         current_session = await session.scalar(select(FeishuSession).where(FeishuSession.thread_id == thread_id))
@@ -114,6 +118,7 @@ async def chat_completions(
                 granted_skills,
                 getattr(request.app.state, "checkpointer", None),
                 mcp_context=mcp_context,
+                system_prompt=system_prompt,
             )
             result = await agent.ainvoke(
                 {
