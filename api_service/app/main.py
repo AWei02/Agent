@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.admin import router as admin_router
 from app.config import get_settings
 from app.api.chat import router as chat_router
-from app.api.feishu import router as feishu_router
+from app.api.feishu import resume_generation_tasks, router as feishu_router
 from app.auth.dependencies import get_api_key_subject
 from app.db import AsyncSessionLocal, get_db_session
 from app.services.api_keys import AuthorizedSubject, apply_file_access_cap, get_granted_tools
@@ -42,6 +42,8 @@ async def lifespan(app: FastAPI):
             await sync_skill_catalog(session)
             await session.commit()
         app.state.checkpointer = checkpointer
+        app.state.feishu_generation_tasks = set()
+        await resume_generation_tasks(app)
         feishu_manager = FeishuConnectionManager()
         manager_task = asyncio.create_task(
             feishu_manager.run(auto_start_on_service_boot=settings.feishu_auto_start_on_service_boot),
@@ -51,6 +53,11 @@ async def lifespan(app: FastAPI):
         try:
             yield
         finally:
+            pending_tasks = tuple(app.state.feishu_generation_tasks)
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
             manager_task.cancel()
             try:
                 await manager_task

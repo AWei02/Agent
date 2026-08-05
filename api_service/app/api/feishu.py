@@ -2,22 +2,31 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import secrets
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_db_session
-from app.models import FeishuActiveSession, FeishuSession, FeishuUserProfile
+from app.agent.runtime import AgentRuntimeError, build_skill_files, create_request_agent
+from app.db import AsyncSessionLocal, get_db_session
+from app.models import ApiKey, FeishuActiveSession, FeishuApplication, FeishuGenerationTask, FeishuSession, FeishuTurn, FeishuUserProfile
+from app.services.api_keys import AuthorizedSubject, apply_file_access_cap, get_granted_tools
+from app.services.audit import record_turn
+from app.services.observability import langfuse_callbacks, observe_chat_request, record_chat_output
+from app.services.prompts import get_request_system_prompt
+from app.services.skills import get_granted_skills
 
 router = APIRouter(prefix="/internal/feishu", tags=["feishu-internal"])
 PAGE_SIZE = 10
+logger = logging.getLogger(__name__)
 
 
 class SessionScope(BaseModel):
@@ -34,6 +43,18 @@ class NewSessionRequest(SessionScope):
 
 class SessionOrdinalRequest(SessionScope):
     ordinal: int = Field(ge=1)
+
+
+class SubmitGenerationTaskRequest(SessionScope):
+    thread_id: str = Field(min_length=1, max_length=512)
+    text: str = Field(min_length=1, max_length=16000)
+
+
+class FeishuGenerationTaskResponse(BaseModel):
+    id: uuid.UUID
+    status: str
+    result_content: str | None = None
+    error_message: str | None = None
 
 
 class UpsertUserRequest(BaseModel):
@@ -116,6 +137,98 @@ def _response(record: FeishuSession, active: FeishuActiveSession | None) -> Feis
         thread_id=record.thread_id,
         is_current=active is not None and active.session_id == record.id,
     )
+
+
+def _task_response(task: FeishuGenerationTask) -> FeishuGenerationTaskResponse:
+    return FeishuGenerationTaskResponse(
+        id=task.id,
+        status=task.status,
+        result_content=task.result_content,
+        error_message=task.error_message,
+    )
+
+
+def _schedule_generation_task(app, task_id: uuid.UUID) -> None:
+    runner = asyncio.create_task(_run_generation_task(task_id, getattr(app.state, "checkpointer", None)))
+    runners = getattr(app.state, "feishu_generation_tasks", set())
+    runners.add(runner)
+    app.state.feishu_generation_tasks = runners
+    runner.add_done_callback(runners.discard)
+
+
+async def resume_generation_tasks(app) -> None:
+    """Requeue durable tasks interrupted by a FastAPI process restart."""
+    async with AsyncSessionLocal() as session:
+        task_ids = (await session.scalars(select(FeishuGenerationTask.id).where(
+            FeishuGenerationTask.status.in_(("queued", "running"))
+        ))).all()
+        if task_ids:
+            await session.execute(
+                update(FeishuGenerationTask)
+                .where(FeishuGenerationTask.id.in_(task_ids))
+                .values(status="queued", started_at=None, error_message=None)
+            )
+            await session.commit()
+    for task_id in task_ids:
+        _schedule_generation_task(app, task_id)
+
+
+async def _run_generation_task(task_id: uuid.UUID, checkpointer) -> None:
+    """Execute one durable Feishu task outside the worker HTTP request."""
+    async with AsyncSessionLocal() as session:
+        task = await session.get(FeishuGenerationTask, task_id)
+        if task is None or task.status != "queued":
+            return
+        task.status, task.started_at = "running", datetime.now(UTC)
+        await session.commit()
+        try:
+            application = await session.get(FeishuApplication, task.application_id)
+            key = await session.get(ApiKey, task.api_key_id)
+            user = await session.get(FeishuUserProfile, task.user_id)
+            feishu_session = await session.get(FeishuSession, task.session_id)
+            if application is None or key is None or not key.is_active or user is None or not user.is_active or feishu_session is None:
+                raise AgentRuntimeError("Feishu task access is no longer available")
+            subject = AuthorizedSubject(key.id, key.name, key.file_access, key.chat_tracking)
+            granted_tools = apply_file_access_cap(subject, await get_granted_tools(session, subject, feishu_user_id=user.id))
+            granted_skills = await get_granted_skills(session, subject, feishu_user_id=user.id)
+            system_prompt = await get_request_system_prompt(session, subject, feishu_user_id=user.id)
+            thread_id = f"key-{subject.api_key_id}:{feishu_session.thread_id}"
+            trace_messages = [{"role": "user", "content": task.user_text}]
+            with observe_chat_request(
+                user_id=user.open_id,
+                session_id=thread_id,
+                model="deep-agents-feishu",
+                source="feishu",
+                messages=trace_messages,
+            ) as observation:
+                agent = await create_request_agent(
+                    subject,
+                    granted_tools,
+                    granted_skills,
+                    checkpointer,
+                    mcp_context={"feishu_chat_id": feishu_session.chat_id, "feishu_chat_type": feishu_session.chat_type},
+                    system_prompt=system_prompt,
+                )
+                result = await agent.ainvoke(
+                    {"messages": [("user", task.user_text)], "files": build_skill_files(granted_skills)},
+                    config={"configurable": {"thread_id": thread_id}, "callbacks": langfuse_callbacks()},
+                )
+                messages = result.get("messages", [])
+                if not messages:
+                    raise AgentRuntimeError("Agent returned no messages")
+                content = str(messages[-1].content).strip()
+                if not content:
+                    raise AgentRuntimeError("Agent returned an empty message")
+                record_chat_output(observation, content)
+            if subject.chat_tracking:
+                await record_turn(session, subject, thread_id, trace_messages, content, "completed")
+            feishu_session.last_used_at = datetime.now(UTC)
+            session.add(FeishuTurn(session_id=feishu_session.id, request_messages=trace_messages, response_content=content, status="completed"))
+            task.status, task.result_content, task.completed_at = "completed", content, datetime.now(UTC)
+        except Exception as exc:
+            logger.exception("Feishu generation task failed: %s", task_id)
+            task.status, task.error_message, task.completed_at = "failed", str(exc)[:2000], datetime.now(UTC)
+        await session.commit()
 
 
 @router.post("/users/upsert", dependencies=[Depends(_require_worker_secret)])
@@ -206,3 +319,47 @@ async def archive_session(payload: SessionOrdinalRequest, session: Annotated[Asy
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="cannot hide the current session")
     record.is_archived = True
     return {"status": "archived"}
+
+
+@router.post("/generation-tasks", response_model=FeishuGenerationTaskResponse, status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(_require_worker_secret)])
+async def submit_generation_task(
+    payload: SubmitGenerationTaskRequest,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> FeishuGenerationTaskResponse:
+    if payload.application_id is None:
+        raise HTTPException(status_code=422, detail="managed Feishu application ID is required")
+    application = await session.get(FeishuApplication, payload.application_id)
+    user = await session.scalar(select(FeishuUserProfile).where(
+        FeishuUserProfile.application_id == payload.application_id,
+        FeishuUserProfile.tenant_key == payload.tenant_key,
+        FeishuUserProfile.open_id == payload.open_id,
+    ))
+    feishu_session = await session.scalar(select(FeishuSession).where(
+        FeishuSession.application_id == payload.application_id,
+        FeishuSession.thread_id == payload.thread_id,
+        FeishuSession.is_archived.is_(False),
+    ))
+    key = await session.get(ApiKey, application.api_key_id) if application else None
+    if application is None or key is None or not key.is_active or user is None or not user.is_active or feishu_session is None:
+        raise HTTPException(status_code=422, detail="Feishu task access is unavailable")
+    task = FeishuGenerationTask(
+        application_id=application.id,
+        session_id=feishu_session.id,
+        api_key_id=key.id,
+        user_id=user.id,
+        user_text=payload.text.strip(),
+    )
+    session.add(task)
+    await session.flush()
+    await session.commit()
+    _schedule_generation_task(request.app, task.id)
+    return _task_response(task)
+
+
+@router.get("/generation-tasks/{task_id}", response_model=FeishuGenerationTaskResponse, dependencies=[Depends(_require_worker_secret)])
+async def get_generation_task(task_id: uuid.UUID, session: Annotated[AsyncSession, Depends(get_db_session)]) -> FeishuGenerationTaskResponse:
+    task = await session.get(FeishuGenerationTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Feishu generation task not found")
+    return _task_response(task)

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass
 import urllib.error
 import urllib.parse
@@ -34,6 +35,23 @@ EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="feishu-agent")
 TEXT_MESSAGE_TYPE = "text"
 TYPING_EMOJI = "Typing"
 MAX_REPLY_CHARS = 3_500
+
+
+def _positive_seconds(name: str, default: float) -> float:
+    """Read a positive duration from the environment without risking a crash."""
+    try:
+        return max(0.0, float(os.getenv(name, str(default))))
+    except ValueError:
+        LOGGER.warning("Invalid %s value; using %s seconds", name, default)
+        return default
+
+
+# This is a soft timeout: generation continues and the final answer is sent
+# as a new Feishu message when it is ready.
+AGENT_REQUEST_TIMEOUT_SECONDS = _positive_seconds("FEISHU_AGENT_REQUEST_TIMEOUT_SECONDS", 300)
+PROCESSING_NOTICE_DELAY_SECONDS = _positive_seconds("FEISHU_PROCESSING_NOTICE_DELAY_SECONDS", 8)
+PROCESSING_NOTICE_TEXT = "正在处理中，完成后会继续回复，请稍候。"
+TASK_POLL_INTERVAL_SECONDS = _positive_seconds("FEISHU_GENERATION_TASK_POLL_INTERVAL_SECONDS", 2)
 HELP_TEXT = (
     "可用指令：\n"
     "/new 项目A讨论：新建并切换会话\n"
@@ -100,11 +118,12 @@ def _scope(data: P2ImMessageReceiveV1, application_id: str | None = None) -> dic
 class InternalApiClient:
     """Calls FastAPI only; the Worker never opens a database connection."""
 
-    def __init__(self, api_base_url: str, platform_api_key: str, internal_secret: str) -> None:
+    def __init__(self, api_base_url: str, platform_api_key: str, internal_secret: str, request_timeout_seconds: float = AGENT_REQUEST_TIMEOUT_SECONDS) -> None:
         self.chat_url = f"{api_base_url.rstrip('/')}/chat/completions"
         self.internal_url = api_base_url.rstrip("/").removesuffix("/v1") + "/internal/feishu"
         self.platform_api_key = platform_api_key
         self.internal_secret = internal_secret
+        self.request_timeout_seconds = request_timeout_seconds
 
     def _request(self, url: str, *, method: str = "GET", payload: dict | None = None) -> object:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
@@ -114,7 +133,7 @@ class InternalApiClient:
             method=method,
             headers={"Content-Type": "application/json; charset=utf-8", "X-Feishu-Internal-Secret": self.internal_secret},
         )
-        with urllib.request.urlopen(request, timeout=90) as response:
+        with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def resolve_session(self, scope: dict[str, str]) -> dict:
@@ -136,6 +155,16 @@ class InternalApiClient:
     def archive_session(self, scope: dict[str, str], ordinal: int) -> None:
         self._request(f"{self.internal_url}/sessions/archive", method="POST", payload={**scope, "ordinal": ordinal})
 
+    def submit_generation_task(self, text: str, thread_id: str, scope: dict[str, str]) -> dict:
+        return self._request(
+            f"{self.internal_url}/generation-tasks",
+            method="POST",
+            payload={**scope, "thread_id": thread_id, "text": text},
+        )  # type: ignore[return-value]
+
+    def get_generation_task(self, task_id: str) -> dict:
+        return self._request(f"{self.internal_url}/generation-tasks/{urllib.parse.quote(task_id)}")  # type: ignore[return-value]
+
     def ask(self, text: str, thread_id: str, scope: dict[str, str]) -> str:
         payload = {"model": "deep-agents-feishu", "messages": [{"role": "user", "content": text}], "stream": False}
         request = urllib.request.Request(
@@ -153,7 +182,7 @@ class InternalApiClient:
                 "X-Feishu-Chat-Type": scope.get("chat_type", "unknown"),
             },
         )
-        with urllib.request.urlopen(request, timeout=90) as response:
+        with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
             result = json.loads(response.read().decode("utf-8"))
         return str(result["choices"][0]["message"]["content"]).strip() or "暂时没有生成回复。"
 
@@ -249,11 +278,33 @@ class FeishuBot:
                 self.reply(chat_id, self._command_reply(text, scope) or HELP_TEXT)
                 return
             reaction_id = self.add_typing_reaction(message_id)
+            completed = threading.Event()
+            notice_timer: threading.Timer | None = None
+            if PROCESSING_NOTICE_DELAY_SECONDS > 0:
+                def send_processing_notice() -> None:
+                    if not completed.is_set():
+                        self.reply(chat_id, PROCESSING_NOTICE_TEXT)
+
+                notice_timer = threading.Timer(PROCESSING_NOTICE_DELAY_SECONDS, send_processing_notice)
+                notice_timer.daemon = True
+                notice_timer.start()
             try:
                 current = self.api.resolve_session(scope)
-                answer = self.api.ask(text, current["thread_id"], scope)
-                self.reply(chat_id, answer)
+                task = self.api.submit_generation_task(text, current["thread_id"], scope)
+                while True:
+                    task = self.api.get_generation_task(task["id"])
+                    if task["status"] == "completed":
+                        self.reply(chat_id, task.get("result_content") or "暂时没有生成回复。")
+                        break
+                    if task["status"] == "failed":
+                        LOGGER.warning("Feishu generation task failed: %s", task.get("error_message"))
+                        self.reply(chat_id, "抱歉，处理消息时发生错误，请稍后再试。")
+                        break
+                    time.sleep(TASK_POLL_INTERVAL_SECONDS)
             finally:
+                completed.set()
+                if notice_timer is not None:
+                    notice_timer.cancel()
                 self.remove_reaction(message_id, reaction_id)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")

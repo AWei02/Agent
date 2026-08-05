@@ -298,6 +298,33 @@ class FeishuApplication(TimestampMixin, Base):
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class FeishuGenerationTask(Base):
+    """A durable background generation requested by a Feishu worker."""
+
+    __tablename__ = "feishu_generation_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform.feishu_applications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform.feishu_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform.api_keys.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform.feishu_user_profiles.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="queued", nullable=False, index=True)
+    result_content: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class FeishuTurn(Base):
     __tablename__ = "feishu_turns"
 
