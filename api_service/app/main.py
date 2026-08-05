@@ -23,6 +23,7 @@ from app.db import AsyncSessionLocal, get_db_session
 from app.services.api_keys import AuthorizedSubject, apply_file_access_cap, get_granted_tools
 from app.services.builtin_tools import ensure_builtin_tool_catalog
 from app.services.skills import SkillError, get_granted_skills, sync_skill_catalog
+from workers.feishu_manager import Manager as FeishuConnectionManager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,7 +42,21 @@ async def lifespan(app: FastAPI):
             await sync_skill_catalog(session)
             await session.commit()
         app.state.checkpointer = checkpointer
-        yield
+        feishu_manager = FeishuConnectionManager()
+        manager_task = asyncio.create_task(
+            feishu_manager.run(auto_start_on_service_boot=settings.feishu_auto_start_on_service_boot),
+            name="feishu-connection-manager",
+        )
+        app.state.feishu_manager = feishu_manager
+        try:
+            yield
+        finally:
+            manager_task.cancel()
+            try:
+                await manager_task
+            except asyncio.CancelledError:
+                pass
+            feishu_manager.shutdown()
 
 app = FastAPI(title="Deep Agents API", lifespan=lifespan)
 app.include_router(admin_router)

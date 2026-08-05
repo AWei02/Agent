@@ -1,7 +1,7 @@
 """Tailwind-powered, same-origin administration dashboard."""
 
 ADMIN_PAGE = r'''<!doctype html>
-<html lang="zh-CN" class="bg-slate-950">
+<html lang="zh-CN" class="bg-slate-950 [scrollbar-gutter:stable]">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -21,7 +21,7 @@ ADMIN_PAGE = r'''<!doctype html>
       </nav>
     </aside>
     <main class="min-w-0 flex-1 p-5 sm:p-8">
-      <header class="mb-8 flex flex-wrap items-center justify-between gap-4"><div><p class="text-sm font-medium text-emerald-400">DEVELOPMENT CONSOLE</p><h1 class="mt-1 text-2xl font-bold tracking-tight sm:text-3xl" id="page-title">平台概览</h1></div><button onclick="loadAll()" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-500 hover:text-white">↻ 刷新数据</button></header>
+      <header class="mb-8 flex flex-wrap items-center justify-between gap-4"><div><p class="text-sm font-medium text-emerald-400">DEVELOPMENT CONSOLE</p><h1 class="mt-1 text-2xl font-bold tracking-tight sm:text-3xl" id="page-title">平台概览</h1></div></header>
 
       <section data-panel="overview" class="panel space-y-6">
         <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -30,7 +30,6 @@ ADMIN_PAGE = r'''<!doctype html>
           <article class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><p class="text-sm text-slate-400">启用角色</p><p class="mt-3 text-3xl font-bold" id="stat-roles">—</p><p class="mt-2 text-xs text-slate-500">角色决定工具可见范围</p></article>
           <article class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><p class="text-sm text-slate-400">启用 API Key</p><p class="mt-3 text-3xl font-bold" id="stat-keys">—</p><p class="mt-2 text-xs text-slate-500">明文 Key 不会保存到数据库</p></article>
         </div>
-        <div class="rounded-2xl border border-slate-800 bg-gradient-to-br from-emerald-500/10 to-slate-900 p-6"><h2 class="text-lg font-semibold">操作步骤</h2><ol class="mt-4 grid gap-3 text-sm text-slate-300 md:grid-cols-5"><li><span class="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-emerald-400 font-bold text-slate-950">1</span>创建 API Key</li><li><span class="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-emerald-400 font-bold text-slate-950">2</span>绑定 MCP 服务</li><li><span class="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-emerald-400 font-bold text-slate-950">3</span>设定角色分配工具</li><li><span class="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-emerald-400 font-bold text-slate-950">4</span>创建 API Key 并且绑定角色</li><li><span class="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-emerald-400 font-bold text-slate-950">5</span>飞书用户绑定额外角色</li></ol></div>
       </section>
 
       <section data-panel="mcp" class="panel hidden space-y-6">
@@ -56,12 +55,12 @@ ADMIN_PAGE = r'''<!doctype html>
   <dialog id="edit-key-dialog" class="w-[min(94vw,500px)] rounded-2xl border border-slate-700 bg-slate-900 p-0 text-slate-100 shadow-2xl backdrop:bg-slate-950/80">
     <form id="edit-key-form" class="p-6"><div class="flex items-start justify-between gap-4"><div><h2 class="text-xl font-semibold">编辑 API Key</h2><p id="edit-key-name" class="mt-1 text-sm text-slate-400"></p></div><button type="button" onclick="$('#edit-key-dialog').close()" class="text-xl text-slate-400 hover:text-white">×</button></div><input id="edit-key-id" type="hidden"><label class="mt-5 block text-sm text-slate-300">文件权限<select id="edit-key-file-access" class="field mt-2"><option value="none">none · 不允许文件访问</option><option value="read_only">read_only · 只读</option><option value="read_write">read_write · 读写</option></select></label><p class="mt-5 text-sm text-slate-300">绑定角色</p><div id="edit-key-roles" class="mt-2 max-h-56 space-y-2 overflow-y-auto"></div><div class="mt-6 flex justify-end gap-3"><button type="button" onclick="$('#edit-key-dialog').close()" class="rounded-lg border border-slate-700 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800">取消</button><button class="primary-btn">保存更改</button></div></form>
   </dialog>
-  <style type="text/tailwindcss">@layer components {.field{@apply w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20}.primary-btn{@apply rounded-lg bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50}.nav-btn{@apply text-slate-400 transition hover:bg-slate-900 hover:text-white}.nav-btn.active{@apply bg-emerald-400 text-slate-950 hover:bg-emerald-300}}</style>
+  <style type="text/tailwindcss">@layer components {.field{@apply w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20}.primary-btn{@apply rounded-lg bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50}.nav-btn{@apply box-border min-h-11 text-slate-400 transition-colors hover:bg-slate-900 hover:text-white}.nav-btn.active{@apply bg-emerald-400 text-slate-950 hover:bg-emerald-300}}</style>
   <script>
     const state={roles:[],servers:[],tools:[],keys:[],newKey:''};
     const titles={overview:'平台概览',mcp:'MCP 服务与工具',roles:'角色与授权',keys:'API Keys'};
     const $=s=>document.querySelector(s); const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-    async function api(path,options={}){const response=await fetch('/admin'+path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){let message='请求失败';const body=await response.text();if(body){try{const data=JSON.parse(body);message=data.detail||message}catch{message=body}}throw Error(message)}return response.status===204?null:response.json()}
+    async function api(path,options={}){const response=await fetch('/admin'+path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){let message='请求失败';const body=await response.text();if(body){try{const data=JSON.parse(body);const detail=data.detail;if(Array.isArray(detail))message=detail.map(item=>item.msg||item.message||JSON.stringify(item)).join('；');else message=detail||message}catch{message=body}}throw Error(message)}return response.status===204?null:response.json()}
     function toast(message,kind='ok'){const el=$('#toast');el.textContent=message;el.className=`fixed bottom-5 right-5 max-w-md rounded-xl border px-4 py-3 text-sm shadow-2xl ${kind==='ok'?'border-emerald-500/40 bg-emerald-950 text-emerald-200':'border-rose-500/40 bg-rose-950 text-rose-200'}`;setTimeout(()=>el.classList.add('hidden'),3500)}
     function toolOrigin(tool){return tool.source==='builtin'?'Deep Agents 内置工具':(state.servers.find(s=>s.id===tool.server_id)?.name||'未知 MCP 服务')}
     function render(){
@@ -114,6 +113,25 @@ ADMIN_PAGE += r'''<script>
 })();
 </script>'''
 
+ADMIN_PAGE += r'''<script>
+(() => {
+  const nav=document.querySelector('#nav'), main=document.querySelector('main'); if(!nav||!main)return;
+  const button=document.createElement('button'); button.type='button'; button.dataset.view='feishu-applications'; button.className='nav-btn w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium'; button.textContent='飞书应用管理';
+  const usersButton=nav.querySelector('[data-view="feishu"]'); usersButton?.insertAdjacentElement('beforebegin',button)||nav.appendChild(button);
+  const panel=document.createElement('section'); panel.dataset.panel='feishu-applications'; panel.className='panel hidden space-y-6';
+  panel.innerHTML=`<div class="flex items-start justify-between gap-4"><div><h2 class="text-xl font-semibold">飞书应用管理</h2><p class="mt-2 text-sm text-slate-400">应用与平台 Key 绑定；连接管理 Worker 会自动按此处的启停状态维护长连接。</p></div><button id="create-feishu-app" class="primary-btn">新增飞书应用</button></div><div id="feishu-application-list" class="grid gap-4 md:grid-cols-2"></div>`; main.appendChild(panel);
+  const dialog=document.createElement('dialog'); dialog.className='w-[min(94vw,620px)] rounded-2xl border border-slate-700 bg-slate-900 p-0 text-slate-100'; dialog.innerHTML=`<form id="feishu-app-form" class="space-y-4 p-6"><div class="flex justify-between"><h2 class="text-xl font-semibold">新增飞书应用</h2><button type="button" onclick="this.closest('dialog').close()">×</button></div><label class="block text-sm">应用名称<input id="feishu-app-name" required maxlength="120" class="field mt-2" placeholder="财务助手"></label><label class="block text-sm">飞书 App ID<input id="feishu-app-id" required maxlength="128" class="field mt-2" placeholder="cli_xxx"></label><label class="block text-sm">飞书 App Secret<textarea id="feishu-app-secret" required maxlength="2048" rows="3" class="field mt-2" placeholder="仅加密保存，创建后不再回显"></textarea></label><label class="block text-sm">平台 API Key<select id="feishu-app-key" required class="field mt-2"></select></label><div class="flex justify-end gap-3"><button type="button" onclick="this.closest('dialog').close()" class="rounded-lg border border-slate-700 px-4 py-2">取消</button><button class="primary-btn">保存应用</button></div></form>`; document.body.appendChild(dialog);
+  let applications=[];
+  const status=(item)=>item.connection_status==='running'?'bg-emerald-500/15 text-emerald-300':item.connection_status==='error'?'bg-rose-500/15 text-rose-300':'bg-slate-700 text-slate-300';
+  function draw(){const host=document.querySelector('#feishu-application-list');host.innerHTML=applications.length?applications.map(item=>`<article class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><div class="flex items-start justify-between gap-3"><div><h3 class="font-semibold">${esc(item.name)}</h3><p class="mt-1 font-mono text-xs text-emerald-300">${esc(item.app_id)}</p></div><span class="rounded-full px-2 py-1 text-xs ${status(item)}">${esc(item.connection_status)}</span></div><p class="mt-3 text-sm text-slate-400">平台 Key：${esc(item.api_key_name)}</p><p class="mt-1 text-xs text-slate-500">期望状态：${esc(item.desired_state)}${item.last_error?' · '+esc(item.last_error):''}</p><div class="mt-4 flex gap-2"><button data-app-action="start" data-app-id="${item.id}" class="rounded-lg border border-emerald-500/40 px-3 py-2 text-sm text-emerald-300">启动</button><button data-app-action="stop" data-app-id="${item.id}" class="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-300">停止</button><button data-app-action="restart" data-app-id="${item.id}" class="rounded-lg border border-sky-500/40 px-3 py-2 text-sm text-sky-300">重启</button></div></article>`).join(''):'<p class="rounded-xl border border-dashed border-slate-700 p-8 text-center text-sm text-slate-500">尚未登记飞书应用。</p>';host.querySelectorAll('[data-app-action]').forEach(node=>node.onclick=async()=>{try{await api(`/feishu-applications/${node.dataset.appId}/${node.dataset.appAction}`,{method:'POST'});await load();toast('飞书应用状态已更新')}catch(e){toast(e.message,'error')}})}
+  async function load(){applications=await api('/feishu-applications');draw()}
+  document.querySelector('#create-feishu-app').onclick=()=>{document.querySelector('#feishu-app-key').innerHTML=(state.keys||[]).filter(key=>key.is_active).map(key=>`<option value="${key.id}">${esc(key.name)}</option>`).join('')||'<option value="">暂无启用 Key</option>';dialog.showModal()};
+  document.querySelector('#feishu-app-form').onsubmit=async event=>{event.preventDefault();try{await api('/feishu-applications',{method:'POST',body:JSON.stringify({name:document.querySelector('#feishu-app-name').value.trim(),app_id:document.querySelector('#feishu-app-id').value.trim(),app_secret:document.querySelector('#feishu-app-secret').value.trim(),api_key_id:document.querySelector('#feishu-app-key').value})});event.target.reset();dialog.close();await load();toast('飞书应用已创建')}catch(e){toast(e.message,'error')}};
+  button.onclick=async()=>{document.querySelectorAll('.panel').forEach(item=>item.classList.toggle('hidden',item!==panel));document.querySelectorAll('.nav-btn').forEach(item=>item.classList.toggle('active',item===button));document.querySelector('#page-title').textContent='飞书应用管理';try{await load()}catch(e){toast(e.message,'error')}};
+  setTimeout(()=>nav.querySelector('[data-view="feishu"]')?.insertAdjacentElement('beforebegin',button),0);
+})();
+</script>'''
+
 # This must be the final page enhancement so it owns the Key form handlers.
 ADMIN_PAGE += r'''<script>
 (() => {
@@ -153,6 +171,18 @@ ADMIN_PAGE += r'''<script>
   document.querySelector('#key-form').onsubmit = async event => { event.preventDefault(); const form = new FormData(event.target); const role_ids = [...document.querySelectorAll('#key-roles input:checked')].map(item => item.value); try { const result = await api('/api-keys', {method:'POST', body:JSON.stringify({name:form.get('name'), file_access:form.get('file_access'), role_ids, chat_tracking:false, prompt_template_id:document.querySelector('#key-prompt-template')?.value || null})}); state.newKey = result.api_key; document.querySelector('#new-key').textContent = result.api_key; event.target.reset(); await loadAll(); } catch (error) { toast(error.message, 'error'); } };
   document.querySelector('#edit-key-form').onsubmit = async event => { event.preventDefault(); const id = document.querySelector('#edit-key-id').value; const role_ids = [...document.querySelectorAll('#edit-key-roles input:checked')].map(item => item.value); try { await api(`/api-keys/${id}`, {method:'PATCH', body:JSON.stringify({file_access:document.querySelector('#edit-key-file-access').value, role_ids, chat_tracking:document.querySelector('#edit-key-chat-tracking').checked, prompt_template_id:document.querySelector('#edit-key-prompt-template')?.value || null})}); document.querySelector('#edit-key-dialog').close(); await loadAll(); } catch (error) { toast(error.message, 'error'); } };
   addTemplateFields();
+})();
+</script>'''
+
+# Add edit controls to dynamically rendered Feishu application cards.
+ADMIN_PAGE += r'''<script>
+(() => {
+  const dialog=document.createElement('dialog'); dialog.id='edit-feishu-application-dialog'; dialog.className='w-[min(94vw,620px)] rounded-2xl border border-slate-700 bg-slate-900 p-6 text-slate-100';
+  dialog.innerHTML='<form id="edit-feishu-application-form" class="space-y-4"><div class="flex justify-between"><h2 class="text-xl font-semibold">编辑飞书应用</h2><button type="button" onclick="this.closest(\'dialog\').close()">×</button></div><label class="block text-sm">应用名称<input id="edit-feishu-app-name" required class="field mt-2"></label><label class="block text-sm">飞书 App ID<input id="edit-feishu-app-id" required class="field mt-2"></label><label class="block text-sm">平台 API Key<select id="edit-feishu-app-key" class="field mt-2"></select></label><label class="block text-sm">更新 App Secret（留空则不变）<textarea id="edit-feishu-app-secret" rows="3" class="field mt-2"></textarea></label><div class="flex justify-end gap-3"><button type="button" onclick="this.closest(\'dialog\').close()" class="rounded-lg border border-slate-700 px-4 py-2">取消</button><button class="primary-btn">保存配置</button></div></form>'; document.body.appendChild(dialog);
+  async function edit(id){const apps=await api('/feishu-applications');const app=apps.find(item=>item.id===id);if(!app)return;dialog.dataset.id=id;document.querySelector('#edit-feishu-app-name').value=app.name;document.querySelector('#edit-feishu-app-id').value=app.app_id;document.querySelector('#edit-feishu-app-secret').value='';document.querySelector('#edit-feishu-app-key').innerHTML=(state.keys||[]).filter(key=>key.is_active||key.id===app.api_key_id).map(key=>`<option value="${key.id}" ${key.id===app.api_key_id?'selected':''}>${esc(key.name)}</option>`).join('');dialog.showModal()}
+  dialog.querySelector('form').onsubmit=async event=>{event.preventDefault();const id=dialog.dataset.id;const secret=document.querySelector('#edit-feishu-app-secret').value.trim();try{await api(`/feishu-applications/${id}`,{method:'PATCH',body:JSON.stringify({name:document.querySelector('#edit-feishu-app-name').value.trim(),app_id:document.querySelector('#edit-feishu-app-id').value.trim(),api_key_id:document.querySelector('#edit-feishu-app-key').value,app_secret:secret||null})});dialog.close();document.querySelector('[data-view="feishu-applications"]')?.click();toast('飞书应用已更新')}catch(e){toast(e.message,'error')}};
+  const attach=()=>{const labels={stopped:'已停止',starting:'启动中',running:'已启动',stopping:'停止中',error:'启动失败'};document.querySelectorAll('#feishu-application-list article span').forEach(node=>{const raw=node.textContent.trim();if(labels[raw])node.textContent=labels[raw]});document.querySelectorAll('[data-app-action="start"]').forEach(start=>{const actions=start.parentElement;if(actions.querySelector('[data-app-edit]'))return;const editButton=document.createElement('button');editButton.type='button';editButton.dataset.appEdit=start.dataset.appId;editButton.className='rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200';editButton.textContent='编辑配置';editButton.onclick=()=>edit(editButton.dataset.appEdit);actions.prepend(editButton)})};
+  new MutationObserver(attach).observe(document.body,{childList:true,subtree:true}); setTimeout(attach,0);
 })();
 </script>'''
 
@@ -403,10 +433,17 @@ ADMIN_PAGE += r'''<script>
   panel.dataset.panel = 'feishu'; panel.className = 'panel hidden space-y-6';
   panel.innerHTML = `<div><h2 class="text-xl font-semibold">飞书用户管理</h2><p class="mt-2 text-sm text-slate-400">角色授权可叠加用户额外工具和 Skill。</p></div><div class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/60"><table class="w-full min-w-[960px] text-left text-sm"><thead class="bg-slate-900 text-slate-400"><tr><th class="px-5 py-3">飞书用户</th><th>角色</th><th>额外工具</th><th>最终工具</th><th>会话</th><th>状态</th><th>操作</th></tr></thead><tbody id="feishu-user-rows" class="divide-y divide-slate-800"></tbody></table></div><dialog id="feishu-user-dialog" class="w-[min(94vw,680px)] rounded-2xl border border-slate-700 bg-slate-900 p-6 text-slate-100"><h3 id="feishu-user-name" class="text-xl font-semibold"></h3><p id="feishu-user-openid" class="mt-1 text-xs text-slate-400"></p><p class="mt-5 text-sm">额外角色</p><div id="feishu-user-roles" class="mt-2 grid gap-2 sm:grid-cols-2"></div><p class="mt-5 text-sm">额外工具</p><div id="feishu-user-tools" class="mt-2 grid gap-2 sm:grid-cols-2"></div><p class="mt-5 text-sm">额外 Skill</p><div id="feishu-user-skills" class="mt-2 grid gap-2 sm:grid-cols-2"></div><label class="mt-5 flex gap-2"><input id="feishu-user-active" type="checkbox"> 启用该用户</label><div class="mt-6 flex justify-end gap-3"><button onclick="document.querySelector('#feishu-user-dialog').close()" class="rounded-lg border border-slate-700 px-4 py-2">取消</button><button id="save-feishu-user" class="primary-btn">保存</button></div></dialog>`;
   main.appendChild(panel);
-  let feishuUsers = [], editingUser = null;
+  const applicationFilter=document.createElement('div'); applicationFilter.className='flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4'; applicationFilter.innerHTML='<label for="feishu-application-filter" class="text-sm font-semibold">飞书应用</label><select id="feishu-application-filter" class="field max-w-sm"></select><span id="feishu-application-hint" class="text-xs text-slate-400"></span>'; panel.querySelector('.overflow-x-auto').before(applicationFilter);
+  let feishuUsers = [], feishuApplications = [], selectedFeishuApplicationId = '', editingUser = null;
+  applicationFilter.querySelector('#feishu-application-filter').onchange = async event => { selectedFeishuApplicationId = event.target.value; try { await loadFeishuUsers(); } catch (error) { toast(error.message, 'error'); } };
   const chip = name => `<span title="${esc(name)}" class="mr-1 inline-block max-w-36 truncate rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300">${esc(name)}</span>`;
   async function loadFeishuUsers() {
-    const users = await api('/feishu-users'); feishuUsers = users;
+    feishuApplications = await api('/feishu-applications');
+    if (!feishuApplications.some(app => app.id === selectedFeishuApplicationId)) selectedFeishuApplicationId = feishuApplications[0]?.id || '';
+    const select = document.querySelector('#feishu-application-filter');
+    select.innerHTML = feishuApplications.map(app => `<option value="${app.id}">${esc(app.name)} · ${esc(app.api_key_name)}</option>`).join(''); select.value = selectedFeishuApplicationId;
+    document.querySelector('#feishu-application-hint').textContent = feishuApplications.length ? '仅显示当前应用的用户、会话与权限。' : '请先创建飞书应用。';
+    const users = selectedFeishuApplicationId ? await api('/feishu-users?application_id=' + encodeURIComponent(selectedFeishuApplicationId)) : []; feishuUsers = users;
     const rows = document.querySelector('#feishu-user-rows');
     rows.innerHTML = users.length ? users.map(user => {
       const roles = user.role_ids.map(id => state.roles.find(role => role.id === id)?.name).filter(Boolean);
@@ -421,15 +458,20 @@ ADMIN_PAGE += r'''<script>
   function editFeishuUser(id) {
     editingUser = feishuUsers.find(user => user.id === id); if (!editingUser) return;
     document.querySelector('#feishu-user-name').textContent = editingUser.display_name;
-    document.querySelector('#feishu-user-openid').textContent = editingUser.open_id;
+    document.querySelector('#feishu-user-openid').textContent = `${editingUser.application_name} · ${editingUser.open_id}`;
     document.querySelector('#feishu-user-active').checked = editingUser.is_active;
     document.querySelector('#feishu-user-roles').innerHTML = state.roles.map(role => `<label><input type="checkbox" value="${role.id}" ${editingUser.role_ids.includes(role.id) ? 'checked' : ''}> ${esc(role.name)}</label>`).join('');
     document.querySelector('#feishu-user-tools').innerHTML = state.tools.map(tool => `<label><input type="checkbox" value="${tool.id}" ${editingUser.extra_tool_ids.includes(tool.id) ? 'checked' : ''}> ${esc(tool.name)}</label>`).join('');
     document.querySelector('#feishu-user-skills').innerHTML = (state.skills || []).map(skill => `<label><input type="checkbox" value="${skill.id}" ${(editingUser.extra_skill_ids || []).includes(skill.id) ? 'checked' : ''}> ${esc(skill.name)}</label>`).join('') || '<span class="text-sm text-slate-500">暂无已登记 Skill</span>';
     document.querySelector('#feishu-user-key-profiles')?.remove();
     const configured = new Map((editingUser.key_profiles || []).map(profile => [profile.api_key_id, profile]));
+    // Only the API Key bound to this user's Feishu application is relevant.
+    const originalKeys = state.keys;
+    const boundApplication = feishuApplications.find(app => app.id === editingUser.application_id);
+    state.keys = (state.keys || []).filter(key => key.is_active && key.id === boundApplication?.api_key_id);
     document.querySelector('#feishu-user-skills').insertAdjacentHTML('afterend', `<div id="feishu-user-key-profiles" class="mt-5"><p class="text-sm">按 Key 的个性化提示词</p><p class="mt-1 text-xs text-slate-500">仅影响当前 Key 的回答偏好，不会改变 Tool 或 Skill 权限。</p><div class="mt-3 space-y-3">${(state.keys || []).filter(key => key.is_active).map(key => { const profile = configured.get(key.id); return `<label class="block rounded-xl border border-slate-700 bg-slate-950 p-3"><span class="flex items-center gap-2"><input data-key-profile-enabled="${key.id}" type="checkbox" ${profile ? 'checked' : ''}><span class="font-medium">${esc(key.name)}</span><span class="text-xs text-slate-500">${esc(key.prompt_template_name || '仅全局规则')}</span></span><textarea data-key-profile-prompt="${key.id}" maxlength="4000" rows="3" class="field mt-3" placeholder="该用户在此 Key 下的工作偏好">${esc(profile?.prompt_profile || '')}</textarea></label>`; }).join('') || '<p class="text-sm text-slate-500">暂无可配置的启用 Key。</p>'}</div></div>`);
     document.querySelector('#feishu-user-dialog').showModal();
+    state.keys = originalKeys;
   }
   document.querySelector('#save-feishu-user').onclick = async () => {
     if (!editingUser) return;

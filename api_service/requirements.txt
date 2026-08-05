@@ -8,6 +8,7 @@ openai
 lark-oapi
 python-dotenv
 python-multipart
+cryptography
 PyJWT
 SQLAlchemy
 asyncpg

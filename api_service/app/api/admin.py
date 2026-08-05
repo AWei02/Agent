@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_db_session
-from app.models import ApiAuditSession, ApiAuditTurn, ApiKey, ApiKeyRole, FeishuSession, FeishuTurn, FeishuUserKeyProfile, FeishuUserProfile, FeishuUserRole, FeishuUserSkillPermission, FeishuUserToolPermission, McpCatalogTool, McpServer, PromptTemplate, RbacRole, RbacRolePermission, RbacRoleSkill, Skill
+from app.models import ApiAuditSession, ApiAuditTurn, ApiKey, ApiKeyRole, FeishuApplication, FeishuSession, FeishuTurn, FeishuUserKeyProfile, FeishuUserProfile, FeishuUserRole, FeishuUserSkillPermission, FeishuUserToolPermission, McpCatalogTool, McpServer, PromptTemplate, RbacRole, RbacRolePermission, RbacRoleSkill, Skill
+from app.services.feishu_secrets import FeishuSecretError, encrypt_secret
 from app.services.mcp_catalog import McpCatalogError, sync_mcp_catalog
 from app.services.builtin_tools import ensure_builtin_tool_catalog
 from app.services.api_keys import ApiKeyError, AuthorizedSubject, apply_file_access_cap, authenticate_api_key, create_api_key, get_granted_tools
@@ -48,13 +49,13 @@ async def feishu_users_page() -> str:
 
 
 class CreateRoleRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=100, pattern=r"^.*\S.*$")
     description: str | None = None
     is_active: bool = True
 
 
 class UpdateRoleRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=100, pattern=r"^.*\S.*$")
     description: str | None = None
     is_active: bool
 
@@ -187,6 +188,32 @@ class FeishuUserKeyProfileResponse(BaseModel):
     prompt_profile: str | None
 
 
+class FeishuApplicationRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    app_id: str = Field(min_length=1, max_length=128)
+    app_secret: str = Field(min_length=1, max_length=2048)
+    api_key_id: uuid.UUID
+
+
+class UpdateFeishuApplicationRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    app_id: str = Field(min_length=1, max_length=128)
+    api_key_id: uuid.UUID
+    app_secret: str | None = Field(default=None, max_length=2048)
+
+
+class FeishuApplicationResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    app_id: str
+    api_key_id: uuid.UUID
+    api_key_name: str
+    desired_state: str
+    connection_status: str
+    last_error: str | None
+    last_heartbeat_at: datetime | None
+
+
 class FeishuUserUpdateRequest(BaseModel):
     role_ids: list[uuid.UUID] = Field(default_factory=list)
     extra_tool_ids: list[uuid.UUID] = Field(default_factory=list)
@@ -197,6 +224,8 @@ class FeishuUserUpdateRequest(BaseModel):
 
 class FeishuUserSummary(BaseModel):
     id: uuid.UUID
+    application_id: uuid.UUID | None
+    application_name: str
     display_name: str
     open_id: str
     avatar_url: str | None
@@ -493,6 +522,69 @@ async def update_prompt_template(
     return _prompt_template_response(template, int(count or 0))
 
 
+def _feishu_application_response(record: FeishuApplication, key_name: str) -> FeishuApplicationResponse:
+    return FeishuApplicationResponse(id=record.id, name=record.name, app_id=record.app_id, api_key_id=record.api_key_id, api_key_name=key_name, desired_state=record.desired_state, connection_status=record.connection_status, last_error=record.last_error, last_heartbeat_at=record.last_heartbeat_at)
+
+
+@router.get("/feishu-applications", response_model=list[FeishuApplicationResponse], dependencies=[Depends(require_admin)])
+async def list_feishu_applications(session: Annotated[AsyncSession, Depends(get_db_session)]) -> list[FeishuApplicationResponse]:
+    rows = (await session.execute(select(FeishuApplication, ApiKey.name).join(ApiKey, ApiKey.id == FeishuApplication.api_key_id).order_by(FeishuApplication.name))).all()
+    return [_feishu_application_response(record, key_name) for record, key_name in rows]
+
+
+@router.post("/feishu-applications", response_model=FeishuApplicationResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
+async def create_feishu_application(payload: FeishuApplicationRequest, session: Annotated[AsyncSession, Depends(get_db_session)]) -> FeishuApplicationResponse:
+    key = await session.get(ApiKey, payload.api_key_id)
+    if key is None or not key.is_active: raise HTTPException(status_code=422, detail="Active API key not found")
+    try: cipher = encrypt_secret(payload.app_secret.strip())
+    except FeishuSecretError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record = FeishuApplication(name=payload.name.strip(), app_id=payload.app_id.strip(), app_secret_ciphertext=cipher, api_key_id=key.id)
+    session.add(record)
+    try: await session.flush()
+    except IntegrityError as exc: raise HTTPException(status_code=409, detail="Feishu application name or App ID already exists") from exc
+    return _feishu_application_response(record, key.name)
+
+
+@router.patch("/feishu-applications/{application_id}", response_model=FeishuApplicationResponse, dependencies=[Depends(require_admin)])
+async def update_feishu_application(application_id: uuid.UUID, payload: UpdateFeishuApplicationRequest, session: Annotated[AsyncSession, Depends(get_db_session)]) -> FeishuApplicationResponse:
+    record = await session.get(FeishuApplication, application_id)
+    key = await session.get(ApiKey, payload.api_key_id)
+    if record is None: raise HTTPException(status_code=404, detail="Feishu application not found")
+    if key is None or not key.is_active: raise HTTPException(status_code=422, detail="Active API key not found")
+    record.name, record.app_id, record.api_key_id = payload.name.strip(), payload.app_id.strip(), key.id
+    if payload.app_secret and payload.app_secret.strip():
+        try: record.app_secret_ciphertext = encrypt_secret(payload.app_secret.strip())
+        except FeishuSecretError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try: await session.flush()
+    except IntegrityError as exc: raise HTTPException(status_code=409, detail="Feishu application name or App ID already exists") from exc
+    return _feishu_application_response(record, key.name)
+
+
+@router.post("/feishu-applications/{application_id}/{action}", response_model=FeishuApplicationResponse, dependencies=[Depends(require_admin)])
+async def set_feishu_application_state(application_id: uuid.UUID, action: Literal["start", "stop", "restart"], request: Request, session: Annotated[AsyncSession, Depends(get_db_session)]) -> FeishuApplicationResponse:
+    record = await session.get(FeishuApplication, application_id)
+    if record is None: raise HTTPException(status_code=404, detail="Feishu application not found")
+    record.desired_state = "running" if action in {"start", "restart"} else "stopped"
+    if action in {"start", "restart"}:
+        record.connection_status, record.last_error = "starting", None
+    else:
+        record.connection_status, record.last_error = "stopping", None
+    # Commit before reconciling: the manager has its own database session and
+    # must observe the click immediately, not wait for the request dependency.
+    await session.commit()
+    manager = getattr(request.app.state, "feishu_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Feishu connection manager is unavailable")
+    # A click is an imperative operation, not merely a desired-state update.
+    # Clear an existing child first for stop/restart, then reconcile immediately.
+    if action in {"stop", "restart"}:
+        manager.stop_connection(str(application_id))
+    await manager.reconcile(start_missing=action in {"start", "restart"}, application_id=str(application_id))
+    await session.refresh(record)
+    key = await session.get(ApiKey, record.api_key_id)
+    return _feishu_application_response(record, key.name if key else "Unknown Key")
+
+
 @router.post("/api-keys", response_model=CreateApiKeyResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 async def create_key(
     payload: CreateApiKeyRequest, session: Annotated[AsyncSession, Depends(get_db_session)]
@@ -629,7 +721,9 @@ async def _feishu_summary(user: FeishuUserProfile, session: AsyncSession) -> Fei
             .order_by(ApiKey.name)
         )
     ).all()
-    platform_key = os.getenv("FEISHU_PLATFORM_API_KEY", "")
+    application = await session.get(FeishuApplication, user.application_id) if user.application_id else None
+    application_key = await session.get(ApiKey, application.api_key_id) if application else None
+    platform_key = application_key.key_value if application_key and application_key.is_active else ""
     effective_tools: list[dict[str, str]] = []
     effective_skills: list[dict[str, str]] = []
     if platform_key:
@@ -651,9 +745,13 @@ async def _feishu_summary(user: FeishuUserProfile, session: AsyncSession) -> Fei
             ]
         except (ApiKeyError, SkillError):
             pass
-    count = await session.scalar(select(func.count()).select_from(FeishuSession).where(FeishuSession.tenant_key == user.tenant_key, FeishuSession.open_id == user.open_id))
+    count = await session.scalar(select(func.count()).select_from(FeishuSession).where(
+        FeishuSession.application_id == user.application_id,
+        FeishuSession.tenant_key == user.tenant_key,
+        FeishuSession.open_id == user.open_id,
+    ))
     return FeishuUserSummary(
-        id=user.id, display_name=user.display_name, open_id=user.open_id, avatar_url=user.avatar_url,
+        id=user.id, application_id=user.application_id, application_name=application.name if application else "未归属应用", display_name=user.display_name, open_id=user.open_id, avatar_url=user.avatar_url,
         role_ids=role_ids, extra_tool_ids=extra_tool_ids, extra_skill_ids=extra_skill_ids,
         effective_tools=effective_tools, effective_skills=effective_skills, session_count=int(count or 0), is_active=user.is_active,
         key_profiles=[FeishuUserKeyProfileResponse(api_key_id=profile.api_key_id, api_key_name=key_name, is_active=profile.is_active, prompt_profile=profile.prompt_profile) for profile, key_name in key_profiles],
@@ -661,8 +759,14 @@ async def _feishu_summary(user: FeishuUserProfile, session: AsyncSession) -> Fei
 
 
 @router.get("/feishu-users", response_model=list[FeishuUserSummary], dependencies=[Depends(require_admin)])
-async def list_feishu_users(session: Annotated[AsyncSession, Depends(get_db_session)]) -> list[FeishuUserSummary]:
-    users = (await session.scalars(select(FeishuUserProfile).order_by(FeishuUserProfile.updated_at.desc()))).all()
+async def list_feishu_users(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    application_id: uuid.UUID | None = Query(default=None),
+) -> list[FeishuUserSummary]:
+    statement = select(FeishuUserProfile).order_by(FeishuUserProfile.updated_at.desc())
+    if application_id is not None:
+        statement = statement.where(FeishuUserProfile.application_id == application_id)
+    users = (await session.scalars(statement)).all()
     return [await _feishu_summary(user, session) for user in users]
 
 
@@ -710,7 +814,7 @@ async def list_feishu_user_sessions(user_id: uuid.UUID, session: Annotated[Async
     user = await session.get(FeishuUserProfile, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="Feishu user not found")
-    records = (await session.scalars(select(FeishuSession).where(FeishuSession.tenant_key == user.tenant_key, FeishuSession.open_id == user.open_id).order_by(FeishuSession.last_used_at.desc()))).all()
+    records = (await session.scalars(select(FeishuSession).where(FeishuSession.application_id == user.application_id, FeishuSession.tenant_key == user.tenant_key, FeishuSession.open_id == user.open_id).order_by(FeishuSession.last_used_at.desc()))).all()
     return [{"id": str(item.id), "title": item.title, "thread_id": item.thread_id, "is_archived": item.is_archived, "last_used_at": item.last_used_at.isoformat()} for item in records]
 
 
@@ -719,7 +823,7 @@ async def feishu_user_sessions_page(user_id: uuid.UUID, session: Annotated[Async
     user = await session.get(FeishuUserProfile, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="Feishu user not found")
-    records = (await session.scalars(select(FeishuSession).where(FeishuSession.tenant_key == user.tenant_key, FeishuSession.open_id == user.open_id).order_by(FeishuSession.last_used_at.desc()))).all()
+    records = (await session.scalars(select(FeishuSession).where(FeishuSession.application_id == user.application_id, FeishuSession.tenant_key == user.tenant_key, FeishuSession.open_id == user.open_id).order_by(FeishuSession.last_used_at.desc()))).all()
     payload = [{"id": str(item.id), "thread_id": f"#{item.ordinal} {item.title}", "chat_type": item.chat_type, "is_archived": item.is_archived, "last_used_at": item.last_used_at.isoformat()} for item in records]
     turns_by_session: dict[str, list[dict[str, object]]] = {}
     if records:

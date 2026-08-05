@@ -185,10 +185,11 @@ class FeishuSession(TimestampMixin, Base):
 
     __tablename__ = "feishu_sessions"
     __table_args__ = (
-        UniqueConstraint("tenant_key", "open_id", "chat_id", "ordinal", name="uq_feishu_session_ordinal"),
+        UniqueConstraint("application_id", "tenant_key", "open_id", "chat_id", "ordinal", name="uq_feishu_session_ordinal"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("platform.feishu_applications.id", ondelete="SET NULL"), index=True)
     tenant_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     open_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     chat_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
@@ -204,9 +205,12 @@ class FeishuActiveSession(Base):
     """The selected session for a Feishu user within one chat."""
 
     __tablename__ = "feishu_active_sessions"
-    __table_args__ = (UniqueConstraint("tenant_key", "open_id", "chat_id", name="uq_feishu_active_scope"),)
+    __table_args__ = (UniqueConstraint("application_id", "tenant_key", "open_id", "chat_id", name="uq_feishu_active_scope"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("platform.feishu_applications.id", ondelete="SET NULL"), index=True
+    )
     tenant_key: Mapped[str] = mapped_column(String(128), nullable=False)
     open_id: Mapped[str] = mapped_column(String(128), nullable=False)
     chat_id: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -222,9 +226,12 @@ class FeishuUserProfile(TimestampMixin, Base):
     """A Feishu principal whose incremental permissions are managed in the console."""
 
     __tablename__ = "feishu_user_profiles"
-    __table_args__ = (UniqueConstraint("tenant_key", "open_id", name="uq_feishu_user_identity"),)
+    __table_args__ = (UniqueConstraint("application_id", "tenant_key", "open_id", name="uq_feishu_user_identity"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("platform.feishu_applications.id", ondelete="SET NULL"), index=True
+    )
     tenant_key: Mapped[str] = mapped_column(String(128), nullable=False)
     open_id: Mapped[str] = mapped_column(String(128), nullable=False)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -271,6 +278,24 @@ class FeishuUserKeyProfile(TimestampMixin, Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     prompt_profile: Mapped[str | None] = mapped_column(Text)
+
+
+class FeishuApplication(TimestampMixin, Base):
+    """One managed Feishu long-connection and its API Key binding."""
+
+    __tablename__ = "feishu_applications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    app_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    app_secret_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform.api_keys.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    desired_state: Mapped[str] = mapped_column(String(16), default="stopped", nullable=False)
+    connection_status: Mapped[str] = mapped_column(String(16), default="stopped", nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class FeishuTurn(Base):

@@ -21,6 +21,7 @@ PAGE_SIZE = 10
 
 
 class SessionScope(BaseModel):
+    application_id: uuid.UUID | None = None
     tenant_key: str = Field(min_length=1, max_length=128)
     open_id: str = Field(min_length=1, max_length=128)
     chat_id: str = Field(min_length=1, max_length=128)
@@ -36,6 +37,7 @@ class SessionOrdinalRequest(SessionScope):
 
 
 class UpsertUserRequest(BaseModel):
+    application_id: uuid.UUID | None = None
     tenant_key: str = Field(min_length=1, max_length=128)
     open_id: str = Field(min_length=1, max_length=128)
     display_name: str = Field(min_length=1, max_length=200)
@@ -57,6 +59,7 @@ def _require_worker_secret(value: Annotated[str | None, Header(alias="X-Feishu-I
 
 def _scope_filter(scope: SessionScope):
     return (
+        FeishuSession.application_id == scope.application_id,
         FeishuSession.tenant_key == scope.tenant_key,
         FeishuSession.open_id == scope.open_id,
         FeishuSession.chat_id == scope.chat_id,
@@ -66,6 +69,7 @@ def _scope_filter(scope: SessionScope):
 async def _active(scope: SessionScope, session: AsyncSession) -> FeishuActiveSession | None:
     return await session.scalar(
         select(FeishuActiveSession).where(
+            FeishuActiveSession.application_id == scope.application_id,
             FeishuActiveSession.tenant_key == scope.tenant_key,
             FeishuActiveSession.open_id == scope.open_id,
             FeishuActiveSession.chat_id == scope.chat_id,
@@ -78,6 +82,7 @@ async def _create(scope: SessionScope, title: str, session: AsyncSession) -> Fei
         select(func.coalesce(func.max(FeishuSession.ordinal), 0)).where(*_scope_filter(scope))
     )
     record = FeishuSession(
+        application_id=scope.application_id,
         tenant_key=scope.tenant_key,
         open_id=scope.open_id,
         chat_id=scope.chat_id,
@@ -96,7 +101,7 @@ async def _set_active(scope: SessionScope, record: FeishuSession, session: Async
     if active is None:
         session.add(
             FeishuActiveSession(
-                tenant_key=scope.tenant_key, open_id=scope.open_id, chat_id=scope.chat_id, session_id=record.id
+                application_id=scope.application_id, tenant_key=scope.tenant_key, open_id=scope.open_id, chat_id=scope.chat_id, session_id=record.id
             )
         )
     else:
@@ -115,9 +120,13 @@ def _response(record: FeishuSession, active: FeishuActiveSession | None) -> Feis
 
 @router.post("/users/upsert", dependencies=[Depends(_require_worker_secret)])
 async def upsert_user(payload: UpsertUserRequest, session: Annotated[AsyncSession, Depends(get_db_session)]) -> dict[str, str]:
-    record = await session.scalar(select(FeishuUserProfile).where(FeishuUserProfile.tenant_key == payload.tenant_key, FeishuUserProfile.open_id == payload.open_id))
+    record = await session.scalar(select(FeishuUserProfile).where(
+        FeishuUserProfile.application_id == payload.application_id,
+        FeishuUserProfile.tenant_key == payload.tenant_key,
+        FeishuUserProfile.open_id == payload.open_id,
+    ))
     if record is None:
-        record = FeishuUserProfile(tenant_key=payload.tenant_key, open_id=payload.open_id, display_name=payload.display_name, avatar_url=payload.avatar_url)
+        record = FeishuUserProfile(application_id=payload.application_id, tenant_key=payload.tenant_key, open_id=payload.open_id, display_name=payload.display_name, avatar_url=payload.avatar_url)
         session.add(record)
     else:
         record.display_name, record.avatar_url = payload.display_name, payload.avatar_url
@@ -153,13 +162,14 @@ async def new_session(payload: NewSessionRequest, session: Annotated[AsyncSessio
 
 @router.get("/sessions", response_model=list[FeishuSessionResponse], dependencies=[Depends(_require_worker_secret)])
 async def list_sessions(
+    application_id: uuid.UUID | None = Query(default=None),
     tenant_key: str = Query(min_length=1, max_length=128),
     open_id: str = Query(min_length=1, max_length=128),
     chat_id: str = Query(min_length=1, max_length=128),
     page: int = Query(default=1, ge=1),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[FeishuSessionResponse]:
-    scope = SessionScope(tenant_key=tenant_key, open_id=open_id, chat_id=chat_id)
+    scope = SessionScope(application_id=application_id, tenant_key=tenant_key, open_id=open_id, chat_id=chat_id)
     active = await _active(scope, session)
     records = (
         await session.scalars(

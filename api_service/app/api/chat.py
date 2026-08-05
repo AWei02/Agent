@@ -64,13 +64,22 @@ def _content_as_text(content: object) -> str:
 
 async def _feishu_user(request: Request, session: AsyncSession) -> FeishuUserProfile | None:
     tenant_key, open_id = request.headers.get("X-Feishu-Tenant-Key"), request.headers.get("X-Feishu-Open-Id")
+    application_id = request.headers.get("X-Feishu-Application-Id")
     if not tenant_key and not open_id:
         return None
     secret = request.headers.get("X-Feishu-Internal-Secret", "")
     expected = os.getenv("FEISHU_INTERNAL_AUTH_SECRET", "")
     if not tenant_key or not open_id or not expected or not secrets.compare_digest(secret, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid Feishu worker identity")
-    profile = await session.scalar(select(FeishuUserProfile).where(FeishuUserProfile.tenant_key == tenant_key, FeishuUserProfile.open_id == open_id))
+    try:
+        application_uuid = uuid.UUID(application_id) if application_id else None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid Feishu application identity") from exc
+    profile = await session.scalar(select(FeishuUserProfile).where(
+        FeishuUserProfile.application_id == application_uuid,
+        FeishuUserProfile.tenant_key == tenant_key,
+        FeishuUserProfile.open_id == open_id,
+    ))
     if profile is None or not profile.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Feishu user is disabled or not registered")
     return profile

@@ -10,6 +10,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name, str(default)).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -22,6 +27,7 @@ class Settings:
     langgraph_database_url: str = ""
     langgraph_schema: str = "langgraph"
     skills_dir: Path = Path("skills")
+    feishu_auto_start_on_service_boot: bool = False
 
 
 @lru_cache
@@ -47,4 +53,5 @@ def get_settings() -> Settings:
         langgraph_database_url=os.getenv("LANGGRAPH_DATABASE_URL", ""),
         langgraph_schema=os.getenv("LANGGRAPH_SCHEMA", "langgraph"),
         skills_dir=Path(os.getenv("AGENT_SKILLS_DIR", str(service_dir / "skills"))).resolve(),
+        feishu_auto_start_on_service_boot=_env_bool("FEISHU_AUTO_START_ON_SERVICE_BOOT"),
     )

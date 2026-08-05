@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import threading
+from dataclasses import dataclass
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,6 +47,14 @@ class ConfigurationError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class BotConfig:
+    app_id: str
+    app_secret: str
+    platform_api_key: str
+    application_id: str | None = None
+
+
 class RecentMessageIds:
     def __init__(self, limit: int = 2_000) -> None:
         self.values: set[str] = set()
@@ -79,11 +88,13 @@ def _extract_text(content: str) -> str:
     return str(parsed.get("text", "")).strip() if isinstance(parsed, dict) else ""
 
 
-def _scope(data: P2ImMessageReceiveV1) -> dict[str, str]:
+def _scope(data: P2ImMessageReceiveV1, application_id: str | None = None) -> dict[str, str]:
     sender_id = data.event.sender.sender_id
     open_id = getattr(sender_id, "open_id", None) or getattr(sender_id, "user_id", None) or ""
     tenant_key = getattr(data.event.sender, "tenant_key", None) or getattr(data, "tenant_key", None) or ""
-    return {"tenant_key": tenant_key or "default", "open_id": open_id, "chat_id": data.event.message.chat_id, "chat_type": getattr(data.event.message, "chat_type", "unknown")}
+    scope = {"tenant_key": tenant_key or "default", "open_id": open_id, "chat_id": data.event.message.chat_id, "chat_type": getattr(data.event.message, "chat_type", "unknown")}
+    if application_id: scope["application_id"] = application_id
+    return scope
 
 
 class InternalApiClient:
@@ -110,7 +121,7 @@ class InternalApiClient:
         return self._request(f"{self.internal_url}/sessions/resolve", method="POST", payload=scope)  # type: ignore[return-value]
 
     def upsert_user(self, scope: dict[str, str], display_name: str, avatar_url: str | None) -> None:
-        self._request(f"{self.internal_url}/users/upsert", method="POST", payload={"tenant_key": scope["tenant_key"], "open_id": scope["open_id"], "display_name": display_name, "avatar_url": avatar_url})
+        self._request(f"{self.internal_url}/users/upsert", method="POST", payload={"application_id": scope.get("application_id"), "tenant_key": scope["tenant_key"], "open_id": scope["open_id"], "display_name": display_name, "avatar_url": avatar_url})
 
     def new_session(self, scope: dict[str, str], title: str) -> dict:
         return self._request(f"{self.internal_url}/sessions/new", method="POST", payload={**scope, "title": title})  # type: ignore[return-value]
@@ -138,6 +149,7 @@ class InternalApiClient:
                 "X-Feishu-Internal-Secret": self.internal_secret,
                 "X-Feishu-Tenant-Key": scope["tenant_key"],
                 "X-Feishu-Open-Id": scope["open_id"],
+                "X-Feishu-Application-Id": scope.get("application_id", ""),
                 "X-Feishu-Chat-Type": scope.get("chat_type", "unknown"),
             },
         )
@@ -147,11 +159,11 @@ class InternalApiClient:
 
 
 class FeishuBot:
-    def __init__(self) -> None:
-        self.app_id = _required("FEISHU_APP_ID")
-        self.app_secret = _required("FEISHU_APP_SECRET")
+    def __init__(self, config: BotConfig | None = None) -> None:
+        config = config or BotConfig(_required("FEISHU_APP_ID"), _required("FEISHU_APP_SECRET"), _required("FEISHU_PLATFORM_API_KEY"))
+        self.app_id, self.app_secret, self.application_id = config.app_id, config.app_secret, config.application_id
         self.api = InternalApiClient(
-            _required("FEISHU_AGENT_API_BASE_URL"), _required("FEISHU_PLATFORM_API_KEY"), _required("FEISHU_INTERNAL_AUTH_SECRET")
+            _required("FEISHU_AGENT_API_BASE_URL"), config.platform_api_key, _required("FEISHU_INTERNAL_AUTH_SECRET")
         )
         self.client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
         self.recent_messages = RecentMessageIds()
@@ -271,7 +283,7 @@ class FeishuBot:
         if not text:
             self.reply(event.message.chat_id, "目前只支持文本消息。")
             return
-        EXECUTOR.submit(self._process_message, event.message.chat_id, message_id, text, _scope(data))
+        EXECUTOR.submit(self._process_message, event.message.chat_id, message_id, text, _scope(data, self.application_id))
 
     def run(self) -> None:
         handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(self.handle_message).build()
